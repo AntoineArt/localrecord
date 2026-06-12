@@ -167,7 +167,7 @@ fn mix_streams_opus(
 
     let mut comments = OpusEncComments::create().map_err(|e| e.to_string())?;
     comments
-        .add_comment("ENCODER", "LocalRecord")
+        .add("ENCODER", "LocalRecord")
         .map_err(|e| e.to_string())?;
 
     let mut encoder = OpusEncoder::create_file(
