@@ -6,7 +6,7 @@
 
 Lightweight Windows tray app that records **microphone + desktop audio** (OBS-style WASAPI capture), saves a WAV file, and copies it to the clipboard.
 
-**Download:** [Latest release](https://github.com/AntoineArt/localrecord/releases/latest) · **Website:** [localrecord.vercel.app](https://localrecord.vercel.app)
+**Download:** [Latest release](https://github.com/AntoineArt/localrecord/releases/latest) · **Website:** [localrecord.doublea.engineering](https://localrecord.doublea.engineering)
 
 ## Why LocalRecord?
 
