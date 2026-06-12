@@ -156,24 +156,24 @@ fn mix_streams_opus(
     output_path: &PathBuf,
     bitrate_kbps: u32,
 ) -> Result<u64, String> {
-    use crate::audio::opus::write_opus_recording;
+    use crate::audio::opus::OpusStreamWriter;
 
     let mut mixer = Mixer::new(1.0, 0.85);
+    let mut writer = OpusStreamWriter::create(output_path, bitrate_kbps)?;
 
-    write_opus_recording(output_path, bitrate_kbps, |write| {
-        while !stop.load(Ordering::SeqCst) {
-            pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-            flush_mixer_to_sink(&mut mixer, |chunk| write(chunk))?;
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
-
+    while !stop.load(Ordering::SeqCst) {
         pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-        let tail = mixer.drain_remaining();
-        if !tail.is_empty() {
-            write(&tail)?;
-        }
-        Ok(())
-    })
+        flush_mixer_to_sink(&mut mixer, |chunk| writer.write_samples(chunk))?;
+        thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+    let tail = mixer.drain_remaining();
+    if !tail.is_empty() {
+        writer.write_samples(&tail)?;
+    }
+
+    writer.finalize()
 }
 
 fn pump_mixer_inputs(
