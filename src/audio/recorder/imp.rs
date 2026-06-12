@@ -116,7 +116,7 @@ fn mix_streams(
     let settings = Settings::load();
     match settings.format {
         OutputFormat::Wav => mix_streams_wav(stop, loopback_rx, mic_rx, output_path),
-        OutputFormat::Opus => mix_streams_opus(
+        OutputFormat::Opus => crate::audio::opus::mix_streams_opus(
             stop,
             loopback_rx,
             mic_rx,
@@ -147,33 +147,6 @@ fn mix_streams_wav(
     let tail = mixer.finish();
     writer.write_samples(&tail).map_err(|e| e.to_string())?;
     writer.finalize().map_err(|e| e.to_string())
-}
-
-fn mix_streams_opus(
-    stop: Arc<AtomicBool>,
-    loopback_rx: Receiver<Vec<f32>>,
-    mic_rx: Receiver<Vec<f32>>,
-    output_path: &PathBuf,
-    bitrate_kbps: u32,
-) -> Result<u64, String> {
-    use crate::audio::opus::OpusStreamWriter;
-
-    let mut mixer = Mixer::new(1.0, 0.85);
-    let mut writer = OpusStreamWriter::create(output_path, bitrate_kbps)?;
-
-    while !stop.load(Ordering::SeqCst) {
-        pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-        flush_mixer_to_sink(&mut mixer, |chunk| writer.write_samples(chunk))?;
-        thread::sleep(std::time::Duration::from_millis(5));
-    }
-
-    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-    let tail = mixer.drain_remaining();
-    if !tail.is_empty() {
-        writer.write_samples(&tail)?;
-    }
-
-    writer.finalize()
 }
 
 fn pump_mixer_inputs(

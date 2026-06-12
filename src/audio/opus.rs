@@ -1,11 +1,18 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+
+use crossbeam_channel::Receiver;
 
 use audiopus::coder::Encoder;
 use audiopus::{Application, Bitrate, Channels, SampleRate};
 use ogg::writing::PacketWriteEndInfo;
 use ogg::PacketWriter;
+
+use crate::audio::mixer::Mixer;
 
 const STREAM_SERIAL: u32 = 0x4C_52_43_44; // "LRCD"
 const FRAME_SAMPLES_PER_CHANNEL: usize = 960; // 20 ms at 48 kHz
@@ -13,69 +20,62 @@ const FRAME_SAMPLES_STEREO: usize = FRAME_SAMPLES_PER_CHANNEL * 2;
 const GRANULE_STEP: u64 = FRAME_SAMPLES_PER_CHANNEL as u64;
 const MAX_PACKET_BYTES: usize = 4000;
 const INPUT_SAMPLE_RATE: u32 = 48_000;
+const WRITE_CHUNK_SAMPLES: usize = 4800 * 2;
 
-pub struct OpusStreamWriter {
-    encoder: Encoder,
-    ogg: PacketWriter<BufWriter<File>>,
-    pending: Vec<f32>,
-    packet_buf: Vec<u8>,
-    sample_frames: u64,
-    granule: u64,
-    first_audio_page: bool,
-    queued_packet: Option<(Vec<u8>, u64)>,
-}
-
-impl OpusStreamWriter {
-    pub fn create(path: &Path, bitrate_kbps: u32) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-
-        let file = BufWriter::new(File::create(path).map_err(|e| e.to_string())?);
-        let mut ogg = PacketWriter::new(file);
-
-        let mut encoder = Encoder::new(SampleRate::Hz48000, Channels::Stereo, Application::Audio)
-            .map_err(|e| e.to_string())?;
-        encoder
-            .set_bitrate(Bitrate::BitsPerSecond(
-                i32::try_from(bitrate_kbps.saturating_mul(1000)).unwrap_or(64_000),
-            ))
-            .map_err(|e| e.to_string())?;
-        encoder.enable_vbr().map_err(|e| e.to_string())?;
-
-        let pre_skip =
-            u16::try_from(encoder.lookahead().map_err(|e| e.to_string())?).unwrap_or(312);
-
-        ogg.write_packet(
-            build_opus_head(2, INPUT_SAMPLE_RATE, pre_skip),
-            STREAM_SERIAL,
-            PacketWriteEndInfo::EndPage,
-            0,
-        )
-        .map_err(|e| e.to_string())?;
-
-        ogg.write_packet(
-            build_opus_tags("LocalRecord"),
-            STREAM_SERIAL,
-            PacketWriteEndInfo::EndPage,
-            0,
-        )
-        .map_err(|e| e.to_string())?;
-
-        Ok(Self {
-            encoder,
-            ogg,
-            pending: Vec::with_capacity(FRAME_SAMPLES_STEREO * 2),
-            packet_buf: vec![0u8; MAX_PACKET_BYTES],
-            sample_frames: 0,
-            granule: 0,
-            first_audio_page: true,
-            queued_packet: None,
-        })
+pub fn mix_streams_opus(
+    stop: Arc<AtomicBool>,
+    loopback_rx: Receiver<Vec<f32>>,
+    mic_rx: Receiver<Vec<f32>>,
+    output_path: &PathBuf,
+    bitrate_kbps: u32,
+) -> Result<u64, String> {
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    fn flush_queued(&mut self, end_stream: bool) -> Result<(), String> {
-        let Some((packet, granule_pos)) = self.queued_packet.take() else {
+    let file = BufWriter::new(
+        File::create(output_path).map_err(|e| e.to_string())?,
+    );
+    let mut ogg = PacketWriter::new(file);
+
+    let mut encoder = Encoder::new(SampleRate::Hz48000, Channels::Stereo, Application::Audio)
+        .map_err(|e| e.to_string())?;
+    encoder
+        .set_bitrate(Bitrate::BitsPerSecond(
+            i32::try_from(bitrate_kbps.saturating_mul(1000)).unwrap_or(64_000),
+        ))
+        .map_err(|e| e.to_string())?;
+    encoder.enable_vbr().map_err(|e| e.to_string())?;
+
+    let pre_skip =
+        u16::try_from(encoder.lookahead().map_err(|e| e.to_string())?).unwrap_or(312);
+
+    ogg.write_packet(
+        build_opus_head(2, INPUT_SAMPLE_RATE, pre_skip),
+        STREAM_SERIAL,
+        PacketWriteEndInfo::EndPage,
+        0,
+    )
+    .map_err(|e| e.to_string())?;
+
+    ogg.write_packet(
+        build_opus_tags("LocalRecord"),
+        STREAM_SERIAL,
+        PacketWriteEndInfo::EndPage,
+        0,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut mixer = Mixer::new(1.0, 0.85);
+    let mut pending = Vec::with_capacity(FRAME_SAMPLES_STEREO * 2);
+    let mut packet_buf = vec![0u8; MAX_PACKET_BYTES];
+    let mut sample_frames = 0u64;
+    let mut granule = 0u64;
+    let mut first_audio_page = true;
+    let mut queued_packet: Option<(Vec<u8>, u64)> = None;
+
+    let mut flush_queued = |end_stream: bool| -> Result<(), String> {
+        let Some((packet, granule_pos)) = queued_packet.take() else {
             return Ok(());
         };
         let end_info = if end_stream {
@@ -83,64 +83,90 @@ impl OpusStreamWriter {
         } else {
             PacketWriteEndInfo::NormalPacket
         };
-        self.ogg
-            .write_packet(packet, STREAM_SERIAL, end_info, granule_pos)
+        ogg.write_packet(packet, STREAM_SERIAL, end_info, granule_pos)
             .map_err(|e| e.to_string())
-    }
+    };
 
-    fn queue_packet(&mut self, packet: Vec<u8>, granule_pos: u64) -> Result<(), String> {
-        self.flush_queued(false)?;
-        self.queued_packet = Some((packet, granule_pos));
-        Ok(())
-    }
-
-    pub fn write_samples(&mut self, samples: &[f32]) -> Result<(), String> {
-        self.pending.extend_from_slice(samples);
-        while self.pending.len() >= FRAME_SAMPLES_STEREO {
-            let frame = self
-                .pending
-                .drain(..FRAME_SAMPLES_STEREO)
-                .collect::<Vec<_>>();
-            let packet_len = self
-                .encoder
-                .encode_float(&frame, &mut self.packet_buf)
+    let mut encode_pending = || -> Result<(), String> {
+        while pending.len() >= FRAME_SAMPLES_STEREO {
+            let frame = pending.drain(..FRAME_SAMPLES_STEREO).collect::<Vec<_>>();
+            let packet_len = encoder
+                .encode_float(&frame, &mut packet_buf)
                 .map_err(|e| e.to_string())?;
-            self.granule += GRANULE_STEP;
-            self.sample_frames += GRANULE_STEP;
-            let packet = self.packet_buf[..packet_len].to_vec();
+            granule += GRANULE_STEP;
+            sample_frames += GRANULE_STEP;
+            let packet = packet_buf[..packet_len].to_vec();
 
-            if self.first_audio_page {
-                self.first_audio_page = false;
-                self.ogg
-                    .write_packet(
-                        packet,
-                        STREAM_SERIAL,
-                        PacketWriteEndInfo::EndPage,
-                        self.granule,
-                    )
+            if first_audio_page {
+                first_audio_page = false;
+                ogg.write_packet(packet, STREAM_SERIAL, PacketWriteEndInfo::EndPage, granule)
                     .map_err(|e| e.to_string())?;
             } else {
-                self.queue_packet(packet, self.granule)?;
+                flush_queued(false)?;
+                queued_packet = Some((packet, granule));
             }
         }
         Ok(())
+    };
+
+    while !stop.load(Ordering::SeqCst) {
+        pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+        for chunk in take_mixer_chunks(&mut mixer) {
+            pending.extend_from_slice(&chunk);
+            encode_pending()?;
+        }
+        thread::sleep(std::time::Duration::from_millis(5));
     }
 
-    pub fn finalize(mut self) -> Result<u64, String> {
-        if !self.pending.is_empty() {
-            self.pending.resize(FRAME_SAMPLES_STEREO, 0.0);
-            let packet_len = self
-                .encoder
-                .encode_float(&self.pending, &mut self.packet_buf)
-                .map_err(|e| e.to_string())?;
-            self.granule += GRANULE_STEP;
-            self.sample_frames += GRANULE_STEP;
-            self.queue_packet(self.packet_buf[..packet_len].to_vec(), self.granule)?;
-        }
+    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+    for chunk in take_mixer_chunks(&mut mixer) {
+        pending.extend_from_slice(&chunk);
+    }
+    pending.extend_from_slice(&mixer.drain_remaining());
+    encode_pending()?;
 
-        self.flush_queued(true)?;
-        self.ogg.into_inner().flush().map_err(|e| e.to_string())?;
-        Ok(self.sample_frames)
+    if !pending.is_empty() {
+        pending.resize(FRAME_SAMPLES_STEREO, 0.0);
+        let packet_len = encoder
+            .encode_float(&pending, &mut packet_buf)
+            .map_err(|e| e.to_string())?;
+        granule += GRANULE_STEP;
+        sample_frames += GRANULE_STEP;
+        flush_queued(false)?;
+        queued_packet = Some((packet_buf[..packet_len].to_vec(), granule));
+    }
+
+    flush_queued(true)?;
+    ogg.into_inner().flush().map_err(|e| e.to_string())?;
+    Ok(sample_frames)
+}
+
+fn take_mixer_chunks(mixer: &mut Mixer) -> Vec<Vec<f32>> {
+    let mut chunks = Vec::new();
+    loop {
+        let chunk = mixer.take_output_chunk(WRITE_CHUNK_SAMPLES);
+        if chunk.is_empty() {
+            break;
+        }
+        let len = chunk.len();
+        chunks.push(chunk);
+        if len < WRITE_CHUNK_SAMPLES {
+            break;
+        }
+    }
+    chunks
+}
+
+fn pump_mixer_inputs(
+    mixer: &mut Mixer,
+    loopback_rx: &Receiver<Vec<f32>>,
+    mic_rx: &Receiver<Vec<f32>>,
+) {
+    while let Ok(chunk) = loopback_rx.try_recv() {
+        mixer.push_loopback(&chunk);
+    }
+    while let Ok(chunk) = mic_rx.try_recv() {
+        mixer.push_mic(&chunk);
     }
 }
 
