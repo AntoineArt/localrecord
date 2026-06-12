@@ -14,7 +14,6 @@ mod hotkey_picker;
 mod icon;
 mod log;
 mod notification;
-mod overlay;
 mod settings;
 mod startup;
 mod tray;

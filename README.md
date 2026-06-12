@@ -17,7 +17,7 @@ Quick recordings without opening a full DAW or OBS. One hotkey toggles capture o
 - **Dual capture** — WASAPI loopback (desktop/apps) + microphone, mixed to one file
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu
 - **System tray** — start/stop, open recordings folder, change shortcut, startup toggle
-- **Recording indicator** — small always-on-top marker while recording
+- **Recording indicator** — tray icon shows a red badge while recording
 - **Clipboard export** — audio copied as `WAVE` on stop
 - **No console window** — runs quietly in the notification area
 - **Low idle cost** — no audio threads until you record

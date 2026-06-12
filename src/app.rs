@@ -5,7 +5,6 @@ use crate::clipboard;
 use crate::config;
 use crate::hotkey::{self, HotkeyManager};
 use crate::log;
-use crate::overlay::{OverlayHandle, RecordingOverlay};
 use crate::startup;
 use crate::tray::{TrayAction, TrayController};
 
@@ -13,7 +12,6 @@ enum AppState {
     Idle,
     Recording {
         recorder: Recorder,
-        overlay: OverlayHandle,
     },
 }
 
@@ -155,9 +153,8 @@ impl App {
 
         match Recorder::start() {
             Ok(recorder) => {
-                let overlay = RecordingOverlay::show();
                 let _ = self.tray.set_recording(true);
-                self.state = AppState::Recording { recorder, overlay };
+                self.state = AppState::Recording { recorder };
                 log::info("Recording started");
             }
             Err(err) => {
@@ -168,13 +165,12 @@ impl App {
     }
 
     fn stop_recording(&mut self) {
-        let AppState::Recording { recorder, overlay } =
+        let AppState::Recording { recorder } =
             std::mem::replace(&mut self.state, AppState::Idle)
         else {
             return;
         };
 
-        drop(overlay);
         let _ = self.tray.set_recording(false);
 
         match recorder.stop() {

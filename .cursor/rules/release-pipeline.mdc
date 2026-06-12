@@ -1,0 +1,40 @@
+---
+description: Full release pipeline when the user says RELEASE
+alwaysApply: true
+---
+
+# RELEASE Pipeline
+
+When the user says **RELEASE** (or asks to build and release), run the full pipeline without skipping steps.
+
+## 1. App repo (`localrecord`)
+
+1. Ensure all code changes are complete and `cargo check --target x86_64-pc-windows-gnu` passes (or rely on CI if cross-compile unavailable locally).
+2. Bump `version` in `Cargo.toml` (patch unless user specifies otherwise).
+3. Update `README.md` if user-facing behavior changed.
+4. Commit and push to `main`.
+5. Create and push an annotated tag: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
+6. Wait for `.github/workflows/release.yml` to finish (Windows build + GitHub Release upload).
+7. Edit the GitHub release notes with a short changelog (fixes/features since last tag).
+
+## 2. Landing page (`localrecord-landing`)
+
+1. Update `index.html` copy if features or install steps changed.
+2. Download links use `release.js` + GitHub API — no manual version strings in hrefs.
+3. Commit and push to `main`.
+4. Deploy: `vercel --prod --yes` from the landing repo.
+5. Point custom domain: `vercel alias set <deployment-url> localrecord.doublea.engineering`
+
+## 3. Verify
+
+- Latest release: `gh release list -R AntoineArt/localrecord --limit 1`
+- Asset present: `localrecord.exe` on the new tag
+- Site live: https://localrecord.doublea.engineering shows updated version via `release.js`
+
+## Repos
+
+| Repo | URL |
+|------|-----|
+| App | https://github.com/AntoineArt/localrecord |
+| Landing | https://github.com/AntoineArt/localrecord-landing |
+| Site | https://localrecord.doublea.engineering |

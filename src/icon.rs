@@ -2,17 +2,17 @@ use tray_icon::Icon;
 
 const SIZE: u32 = 32;
 
-/// Tray icon: microphone on a dark round badge (red accent when recording).
+/// Tray icon: microphone on a dark badge; red dot when recording.
 pub fn tray_icon(recording: bool) -> Icon {
     let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
 
-    let bg = if recording {
-        (210, 45, 45)
-    } else {
-        (45, 52, 70)
-    };
+    let bg = (45, 52, 70);
     let fg = (245, 247, 250);
-    let accent = if recording { (255, 90, 90) } else { (90, 160, 255) };
+    let accent = if recording {
+        (255, 70, 70)
+    } else {
+        (90, 160, 255)
+    };
 
     fill_circle(&mut rgba, SIZE / 2, SIZE / 2, 15.0, bg);
 
@@ -26,11 +26,14 @@ pub fn tray_icon(recording: bool) -> Icon {
     fill_rect(&mut rgba, 14, 20, 18, 24, fg);
     fill_round_rect(&mut rgba, 10, 24, 22, 27, 2, fg);
 
-    // Sound arc accent
     if recording {
-        draw_ring_arc(&mut rgba, 16, 14, 12.0, accent);
+        // Pulsing-style ring around the mic
+        draw_ring(&mut rgba, 16, 15, 13.5, (255, 90, 90), 200);
+        // Red recording badge (bottom-right)
+        fill_circle(&mut rgba, 25, 25, 6.0, (220, 35, 35));
+        fill_circle(&mut rgba, 25, 25, 4.0, (255, 70, 70));
     } else {
-        draw_ring_arc(&mut rgba, 16, 14, 12.0, (70, 120, 200));
+        draw_ring(&mut rgba, 16, 14, 12.0, (70, 120, 200), 180);
     }
 
     Icon::from_rgba(rgba, SIZE, SIZE).expect("valid icon")
@@ -48,14 +51,21 @@ fn fill_circle(rgba: &mut [u8], cx: u32, cy: u32, radius: f32, color: (u8, u8, u
     }
 }
 
-fn draw_ring_arc(rgba: &mut [u8], cx: u32, cy: u32, radius: f32, color: (u8, u8, u8)) {
+fn draw_ring(
+    rgba: &mut [u8],
+    cx: u32,
+    cy: u32,
+    radius: f32,
+    color: (u8, u8, u8),
+    alpha: u8,
+) {
     for y in 0..SIZE {
         for x in 0..SIZE {
             let dx = x as f32 + 0.5 - cx as f32;
             let dy = y as f32 + 0.5 - cy as f32;
             let dist = (dx * dx + dy * dy).sqrt();
-            if dist >= radius - 1.0 && dist <= radius + 0.5 && dx > 1.0 {
-                set_px(rgba, x, y, color, 220);
+            if dist >= radius - 1.0 && dist <= radius + 0.5 {
+                set_px(rgba, x, y, color, alpha);
             }
         }
     }
