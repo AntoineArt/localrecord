@@ -1,0 +1,47 @@
+[package]
+name = "localrecord"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight Windows tray app to record mic + desktop audio (OBS-style WASAPI capture)"
+license = "MIT"
+
+[[bin]]
+name = "localrecord"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+crossbeam-channel = "0.5"
+directories = "5"
+global-hotkey = "0.7"
+tray-icon = "0.19"
+winit = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.22"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "UI_Notifications",
+    "Data_Xml_Dom",
+    "Win32_System_WinRT",
+] }
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
