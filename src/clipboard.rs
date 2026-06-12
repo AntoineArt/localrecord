@@ -10,7 +10,7 @@ pub fn init_clipboard() {}
 
 #[cfg(not(windows))]
 pub fn copy_recording_to_clipboard(
-    _wav_bytes: &[u8],
+    _wav_bytes: Option<&[u8]>,
     _file_path: &std::path::Path,
     _owner: (),
 ) -> Result<(), String> {

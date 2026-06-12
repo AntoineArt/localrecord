@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::settings::Settings;
+
 pub fn recordings_dir() -> PathBuf {
     if let Some(dirs) = directories::ProjectDirs::from("com", "localrecord", "LocalRecord") {
         let path = dirs.data_dir().join("recordings");
@@ -15,8 +17,16 @@ pub fn recordings_dir() -> PathBuf {
 }
 
 pub fn recording_filename() -> PathBuf {
+    let settings = Settings::load();
+    recording_filename_for(&settings)
+}
+
+pub fn recording_filename_for(settings: &Settings) -> PathBuf {
     let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-    recordings_dir().join(format!("recording_{timestamp}.wav"))
+    recordings_dir().join(format!(
+        "recording_{timestamp}.{}",
+        settings.format.extension()
+    ))
 }
 
 pub fn log_file() -> PathBuf {

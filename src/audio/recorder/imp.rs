@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -7,16 +8,21 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use wasapi::*;
 
 use crate::audio::mixer::Mixer;
+use crate::audio::wav::WavWriter;
+use crate::config;
+use crate::settings::{OutputFormat, Settings};
 
 pub struct RecordingResult {
-    pub samples: Vec<f32>,
+    pub path: PathBuf,
     pub duration_secs: f64,
+    pub sample_frames: u64,
 }
 
 pub struct Recorder {
     stop: Arc<AtomicBool>,
     handles: Vec<JoinHandle<()>>,
-    mixer_rx: Option<Receiver<Vec<f32>>>,
+    result_rx: Option<Receiver<Result<u64, String>>>,
+    output_path: PathBuf,
     started_at: Option<std::time::Instant>,
 }
 
@@ -24,10 +30,11 @@ impl Recorder {
     pub fn start() -> Result<Self, String> {
         let _ = initialize_mta();
 
+        let output_path = config::recording_filename();
         let stop = Arc::new(AtomicBool::new(false));
         let (loopback_tx, loopback_rx) = bounded::<Vec<f32>>(64);
         let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
-        let (mixed_tx, mixed_rx) = bounded::<Vec<f32>>(8);
+        let (result_tx, result_rx) = bounded::<Result<u64, String>>(1);
 
         let stop_loopback = Arc::clone(&stop);
         let loopback_handle = thread::Builder::new()
@@ -50,17 +57,20 @@ impl Recorder {
             .map_err(|e| e.to_string())?;
 
         let stop_mixer = Arc::clone(&stop);
+        let path_for_mixer = output_path.clone();
         let mixer_handle = thread::Builder::new()
             .name("mixer".into())
             .spawn(move || {
-                mix_streams(stop_mixer, loopback_rx, mic_rx, mixed_tx);
+                let result = mix_streams(stop_mixer, loopback_rx, mic_rx, &path_for_mixer);
+                let _ = result_tx.send(result);
             })
             .map_err(|e| e.to_string())?;
 
         Ok(Self {
             stop,
             handles: vec![loopback_handle, mic_handle, mixer_handle],
-            mixer_rx: Some(mixed_rx),
+            result_rx: Some(result_rx),
+            output_path,
             started_at: Some(std::time::Instant::now()),
         })
     }
@@ -69,14 +79,17 @@ impl Recorder {
         self.stop.store(true, Ordering::SeqCst);
 
         for handle in self.handles.drain(..) {
-            handle.join().map_err(|_| "Capture thread panicked".to_string())?;
+            handle
+                .join()
+                .map_err(|_| "Capture thread panicked".to_string())?;
         }
 
-        let samples = self
-            .mixer_rx
+        let sample_frames = self
+            .result_rx
             .take()
             .and_then(|rx| rx.recv().ok())
-            .unwrap_or_default();
+            .transpose()?
+            .unwrap_or(0);
 
         let duration_secs = self
             .started_at
@@ -84,38 +97,150 @@ impl Recorder {
             .unwrap_or(0.0);
 
         Ok(RecordingResult {
-            samples,
+            path: self.output_path,
             duration_secs,
+            sample_frames,
         })
     }
 }
+
+/// Flush mixed stereo samples to disk in ~100 ms chunks.
+const WRITE_CHUNK_SAMPLES: usize = 4800 * 2;
 
 fn mix_streams(
     stop: Arc<AtomicBool>,
     loopback_rx: Receiver<Vec<f32>>,
     mic_rx: Receiver<Vec<f32>>,
-    mixed_tx: Sender<Vec<f32>>,
-) {
+    output_path: &PathBuf,
+) -> Result<u64, String> {
+    let settings = Settings::load();
+    match settings.format {
+        OutputFormat::Wav => mix_streams_wav(stop, loopback_rx, mic_rx, output_path),
+        OutputFormat::Opus => mix_streams_opus(
+            stop,
+            loopback_rx,
+            mic_rx,
+            output_path,
+            settings.bitrate_kbps,
+        ),
+    }
+}
+
+fn mix_streams_wav(
+    stop: Arc<AtomicBool>,
+    loopback_rx: Receiver<Vec<f32>>,
+    mic_rx: Receiver<Vec<f32>>,
+    output_path: &PathBuf,
+) -> Result<u64, String> {
     let mut mixer = Mixer::new(1.0, 0.85);
+    let mut writer = WavWriter::create(output_path).map_err(|e| e.to_string())?;
 
     while !stop.load(Ordering::SeqCst) {
-        while let Ok(chunk) = loopback_rx.try_recv() {
-            mixer.push_loopback(&chunk);
-        }
-        while let Ok(chunk) = mic_rx.try_recv() {
-            mixer.push_mic(&chunk);
-        }
+        pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+        flush_mixer_to_sink(&mut mixer, |chunk| {
+            writer.write_samples(chunk).map_err(|e| e.to_string())
+        })?;
         thread::sleep(std::time::Duration::from_millis(5));
     }
 
+    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+    let tail = mixer.finish();
+    writer.write_samples(&tail).map_err(|e| e.to_string())?;
+    writer.finalize().map_err(|e| e.to_string())
+}
+
+fn mix_streams_opus(
+    stop: Arc<AtomicBool>,
+    loopback_rx: Receiver<Vec<f32>>,
+    mic_rx: Receiver<Vec<f32>>,
+    output_path: &PathBuf,
+    bitrate_kbps: u32,
+) -> Result<u64, String> {
+    use libopusenc::{
+        OpusEncApplication, OpusEncBitrate, OpusEncChannelMapping, OpusEncComments,
+        OpusEncSampleRate, OpusEncoder,
+    };
+
+    let path = output_path
+        .to_str()
+        .ok_or_else(|| "Recording path is not valid UTF-8".to_string())?;
+
+    let mut comments = OpusEncComments::create().map_err(|e| e.to_string())?;
+    comments
+        .add_comment("ENCODER", "LocalRecord")
+        .map_err(|e| e.to_string())?;
+
+    let mut encoder = OpusEncoder::create_file(
+        path,
+        &mut comments,
+        OpusEncSampleRate::Hz48000,
+        2,
+        OpusEncChannelMapping::MonoStereo,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let bitrate = bitrate_kbps.saturating_mul(1000);
+    encoder
+        .set_bitrate(OpusEncBitrate::Explicit(bitrate))
+        .map_err(|e| e.to_string())?;
+    encoder.set_vbr(true).map_err(|e| e.to_string())?;
+    encoder
+        .set_application(OpusEncApplication::Audio)
+        .map_err(|e| e.to_string())?;
+
+    let mut mixer = Mixer::new(1.0, 0.85);
+    let mut sample_frames = 0u64;
+
+    while !stop.load(Ordering::SeqCst) {
+        pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+        sample_frames += flush_mixer_to_sink(&mut mixer, |chunk| {
+            encoder.write_float(chunk, 2).map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+        thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+    let tail = mixer.finish();
+    if !tail.is_empty() {
+        encoder.write_float(&tail, 2).map_err(|e| e.to_string())?;
+        sample_frames += (tail.len() / 2) as u64;
+    }
+
+    encoder.drain().map_err(|e| e.to_string())?;
+    Ok(sample_frames)
+}
+
+fn pump_mixer_inputs(
+    mixer: &mut Mixer,
+    loopback_rx: &Receiver<Vec<f32>>,
+    mic_rx: &Receiver<Vec<f32>>,
+) {
     while let Ok(chunk) = loopback_rx.try_recv() {
         mixer.push_loopback(&chunk);
     }
     while let Ok(chunk) = mic_rx.try_recv() {
         mixer.push_mic(&chunk);
     }
+}
 
-    let _ = mixed_tx.send(mixer.finish());
+fn flush_mixer_to_sink(
+    mixer: &mut Mixer,
+    mut write: impl FnMut(&[f32]) -> Result<(), String>,
+) -> Result<u64, String> {
+    let mut frames = 0u64;
+    loop {
+        let chunk = mixer.take_output_chunk(WRITE_CHUNK_SAMPLES);
+        if chunk.is_empty() {
+            break;
+        }
+        frames += (chunk.len() / 2) as u64;
+        write(&chunk)?;
+        if chunk.len() < WRITE_CHUNK_SAMPLES {
+            break;
+        }
+    }
+    Ok(frames)
 }
 
 fn capture_loopback(stop: Arc<AtomicBool>, tx: Sender<Vec<f32>>) -> Result<(), String> {
@@ -161,7 +286,7 @@ fn capture_stream(
     audio_client.start_stream()?;
 
     let mut byte_queue: VecDeque<u8> = VecDeque::with_capacity(blockalign * 4096);
-    const CHUNK_FRAMES: usize = 480; // 10 ms at 48 kHz
+    const CHUNK_FRAMES: usize = 480; // 10 ms at 48 kHz stereo
 
     while !stop.load(Ordering::SeqCst) {
         capture_client.read_from_device_to_deque(&mut byte_queue)?;
@@ -184,7 +309,6 @@ fn capture_stream(
         }
     }
 
-    // Flush remaining bytes
     if !byte_queue.is_empty() {
         let remaining: Vec<u8> = byte_queue.drain(..).collect();
         let samples = bytes_to_f32_stereo(&remaining);

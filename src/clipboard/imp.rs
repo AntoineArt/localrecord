@@ -10,9 +10,9 @@ use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
-use windows::Win32::System::Ole::{CF_HDROP, CF_WAVE};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::OleInitialize;
+use windows::Win32::System::Ole::{CF_HDROP, CF_WAVE};
 
 pub fn init_clipboard() {
     unsafe {
@@ -21,12 +21,14 @@ pub fn init_clipboard() {
 }
 
 pub fn copy_recording_to_clipboard(
-    wav_bytes: &[u8],
+    wav_bytes: Option<&[u8]>,
     file_path: &Path,
     owner: HWND,
 ) -> Result<(), String> {
-    if wav_bytes.is_empty() {
-        return Err("No audio data to copy".to_string());
+    if let Some(wav_bytes) = wav_bytes {
+        if wav_bytes.is_empty() {
+            return Err("No audio data to copy".to_string());
+        }
     }
 
     for attempt in 0..10 {
@@ -42,15 +44,17 @@ pub fn copy_recording_to_clipboard(
             let result = (|| -> Result<(), String> {
                 EmptyClipboard().map_err(|e| format!("EmptyClipboard failed: {e}"))?;
 
-                let wave_registered = register_wave_format()?;
-                let wave_handle = alloc_moveable(wav_bytes)?;
-                SetClipboardData(wave_registered, HANDLE(wave_handle.0))
-                    .map_err(|e| format!("SetClipboardData(custom WAVE) failed: {e}"))?;
+                if let Some(wav_bytes) = wav_bytes {
+                    let wave_registered = register_wave_format()?;
+                    let wave_handle = alloc_moveable(wav_bytes)?;
+                    SetClipboardData(wave_registered, HANDLE(wave_handle.0))
+                        .map_err(|e| format!("SetClipboardData(custom WAVE) failed: {e}"))?;
 
-                if wave_registered != u32::from(CF_WAVE.0) {
-                    let standard_handle = alloc_moveable(wav_bytes)?;
-                    SetClipboardData(u32::from(CF_WAVE.0), HANDLE(standard_handle.0))
-                        .map_err(|e| format!("SetClipboardData(CF_WAVE) failed: {e}"))?;
+                    if wave_registered != u32::from(CF_WAVE.0) {
+                        let standard_handle = alloc_moveable(wav_bytes)?;
+                        SetClipboardData(u32::from(CF_WAVE.0), HANDLE(standard_handle.0))
+                            .map_err(|e| format!("SetClipboardData(CF_WAVE) failed: {e}"))?;
+                    }
                 }
 
                 let drop_data = build_hdrop_data(file_path)?;
@@ -63,7 +67,11 @@ pub fn copy_recording_to_clipboard(
 
             CloseClipboard().ok();
             if result.is_ok() {
-                crate::log::info("Recording copied to clipboard (audio + file)");
+                if wav_bytes.is_some() {
+                    crate::log::info("Recording copied to clipboard (audio + file)");
+                } else {
+                    crate::log::info("Recording file copied to clipboard");
+                }
                 return Ok(());
             }
         }
@@ -82,8 +90,8 @@ unsafe fn register_wave_format() -> Result<u32, String> {
 }
 
 unsafe fn alloc_moveable(data: &[u8]) -> Result<HGLOBAL, String> {
-    let handle = GlobalAlloc(GMEM_MOVEABLE, data.len())
-        .map_err(|e| format!("GlobalAlloc failed: {e}"))?;
+    let handle =
+        GlobalAlloc(GMEM_MOVEABLE, data.len()).map_err(|e| format!("GlobalAlloc failed: {e}"))?;
     let locked = GlobalLock(handle);
     if locked.is_null() {
         return Err("GlobalLock failed".to_string());

@@ -51,14 +51,7 @@ fn fill_circle(rgba: &mut [u8], cx: u32, cy: u32, radius: f32, color: (u8, u8, u
     }
 }
 
-fn draw_ring(
-    rgba: &mut [u8],
-    cx: u32,
-    cy: u32,
-    radius: f32,
-    color: (u8, u8, u8),
-    alpha: u8,
-) {
+fn draw_ring(rgba: &mut [u8], cx: u32, cy: u32, radius: f32, color: (u8, u8, u8), alpha: u8) {
     for y in 0..SIZE {
         for x in 0..SIZE {
             let dx = x as f32 + 0.5 - cx as f32;

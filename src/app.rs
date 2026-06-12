@@ -6,7 +6,6 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::audio::{self, Recorder};
 use crate::clipboard;
-use crate::config;
 use crate::hotkey::{self, HotkeyManager};
 use crate::log;
 use crate::startup;
@@ -26,9 +25,7 @@ pub enum RecordingFinishedOutcome {
 
 enum AppState {
     Idle,
-    Recording {
-        recorder: Recorder,
-    },
+    Recording { recorder: Recorder },
     Finalizing,
 }
 
@@ -41,7 +38,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(clipboard_owner: HWND, event_proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
+    pub fn new(
+        clipboard_owner: HWND,
+        event_proxy: EventLoopProxy<UserEvent>,
+    ) -> Result<Self, String> {
         startup::ensure_enabled();
         let hotkeys = HotkeyManager::from_settings()?;
         let hotkey_label = hotkeys.label();
@@ -78,10 +78,7 @@ impl App {
 
         match outcome {
             RecordingFinishedOutcome::Saved { path, clipboard_ok } => {
-                log::info(&format!(
-                    "Recording saved to {}",
-                    path.display()
-                ));
+                log::info(&format!("Recording saved to {}", path.display()));
                 self.tray.notify_recording_saved(&path, clipboard_ok, false);
             }
             RecordingFinishedOutcome::Empty { duration_secs } => {
@@ -107,8 +104,12 @@ impl App {
     }
 
     fn change_hotkey(&mut self) {
-        if matches!(self.state, AppState::Recording { .. } | AppState::Finalizing) {
-            self.tray.notify("Stop recording before changing shortcut", false);
+        if matches!(
+            self.state,
+            AppState::Recording { .. } | AppState::Finalizing
+        ) {
+            self.tray
+                .notify("Stop recording before changing shortcut", false);
             return;
         }
 
@@ -129,28 +130,26 @@ impl App {
                 self.hotkeys.drain_pending_events();
                 log::info("Shortcut change cancelled");
             }
-            Some(new_binding) => {
-                match self.hotkeys.replace(&new_binding) {
-                    Ok(()) => {
-                        self.hotkeys.drain_pending_events();
-                        let label = self.hotkeys.label();
-                        let _ = self.tray.set_hotkey_label(&label);
-                        let msg = format!("Shortcut changed to {label}");
-                        self.tray.notify(&msg, false);
-                        log::info(&msg);
-                    }
-                    Err(err) => {
-                        log::error(&format!("Failed to set shortcut: {err}"));
-                        if let Err(resume_err) = self.hotkeys.resume() {
-                            log::error(&format!(
-                                "Failed to restore previous shortcut: {resume_err}"
-                            ));
-                        }
-                        self.hotkeys.drain_pending_events();
-                        self.tray.notify("Could not register that shortcut", false);
-                    }
+            Some(new_binding) => match self.hotkeys.replace(&new_binding) {
+                Ok(()) => {
+                    self.hotkeys.drain_pending_events();
+                    let label = self.hotkeys.label();
+                    let _ = self.tray.set_hotkey_label(&label);
+                    let msg = format!("Shortcut changed to {label}");
+                    self.tray.notify(&msg, false);
+                    log::info(&msg);
                 }
-            }
+                Err(err) => {
+                    log::error(&format!("Failed to set shortcut: {err}"));
+                    if let Err(resume_err) = self.hotkeys.resume() {
+                        log::error(&format!(
+                            "Failed to restore previous shortcut: {resume_err}"
+                        ));
+                    }
+                    self.hotkeys.drain_pending_events();
+                    self.tray.notify("Could not register that shortcut", false);
+                }
+            },
         }
     }
 
@@ -233,30 +232,37 @@ fn finalize_recording(recorder: Recorder, clipboard_owner: isize) -> RecordingFi
         }
     };
 
-    if result.samples.is_empty() {
+    if result.sample_frames == 0 {
+        let _ = std::fs::remove_file(&result.path);
         return RecordingFinishedOutcome::Empty {
             duration_secs: result.duration_secs,
         };
     }
 
-    let path = config::recording_filename();
-    if let Err(err) = audio::wav::save_wav(&path, &result.samples) {
-        return RecordingFinishedOutcome::Failed {
-            message: format!("Failed to save recording: {err}"),
-        };
-    }
+    let path = result.path;
+    let is_wav = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"));
 
-    let wav_bytes = std::fs::read(&path).unwrap_or_else(|_| audio::wav::encode_wav(&result.samples));
+    let wav_bytes = if is_wav {
+        match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) => {
+                return RecordingFinishedOutcome::Failed {
+                    message: format!("Failed to read saved recording: {err}"),
+                };
+            }
+        }
+    } else {
+        None
+    };
 
     let clipboard_ok = clipboard::copy_recording_to_clipboard(
-        &wav_bytes,
+        wav_bytes.as_deref(),
         &path,
         HWND(clipboard_owner as *mut _),
     )
     .is_ok();
 
-    RecordingFinishedOutcome::Saved {
-        path,
-        clipboard_ok,
-    }
+    RecordingFinishedOutcome::Saved { path, clipboard_ok }
 }

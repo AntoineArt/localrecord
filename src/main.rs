@@ -65,24 +65,22 @@ fn run() {
     let mut app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
     log::info("LocalRecord started");
 
-    let _ = event_loop.run(move |event, elwt| {
-        match event {
-            winit::event::Event::UserEvent(UserEvent::Menu(menu_event)) => {
-                app.handle_menu_event(&menu_event);
-            }
-            winit::event::Event::UserEvent(UserEvent::Tray(tray_event)) => {
-                app.handle_tray_event(&tray_event);
-            }
-            winit::event::Event::UserEvent(UserEvent::RecordingFinished(outcome)) => {
-                app.handle_recording_finished(outcome);
-            }
-            winit::event::Event::AboutToWait => app.poll_hotkey(),
-            winit::event::Event::WindowEvent {
-                event: winit::event::WindowEvent::CloseRequested,
-                ..
-            } => elwt.exit(),
-            _ => {}
+    let _ = event_loop.run(move |event, elwt| match event {
+        winit::event::Event::UserEvent(UserEvent::Menu(menu_event)) => {
+            app.handle_menu_event(&menu_event);
         }
+        winit::event::Event::UserEvent(UserEvent::Tray(tray_event)) => {
+            app.handle_tray_event(&tray_event);
+        }
+        winit::event::Event::UserEvent(UserEvent::RecordingFinished(outcome)) => {
+            app.handle_recording_finished(outcome);
+        }
+        winit::event::Event::AboutToWait => app.poll_hotkey(),
+        winit::event::Event::WindowEvent {
+            event: winit::event::WindowEvent::CloseRequested,
+            ..
+        } => elwt.exit(),
+        _ => {}
     });
 }
 

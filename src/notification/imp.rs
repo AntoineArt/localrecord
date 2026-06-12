@@ -2,9 +2,9 @@ use std::path::Path;
 
 use windows::core::HSTRING;
 use windows::Data::Xml::Dom::XmlDocument;
-use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
 use crate::balloon;
 use crate::log;
@@ -98,22 +98,22 @@ fn show_toast(title: &str, headline: &str, detail: &str, subdetail: &str) -> Res
         .map_err(|e| e.to_string())?;
 
     let toast = ToastNotification::CreateToastNotification(&document).map_err(|e| e.to_string())?;
-    let notifier =
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
-            .or_else(|_| ToastNotificationManager::CreateToastNotifier())
-            .map_err(|e| e.to_string())?;
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
+        .or_else(|_| ToastNotificationManager::CreateToastNotifier())
+        .map_err(|e| e.to_string())?;
 
     match notifier.Setting() {
         Ok(setting) if setting.0 != 1 => {
-            return Err(format!("Toast notifications disabled (setting={})", setting.0));
+            return Err(format!(
+                "Toast notifications disabled (setting={})",
+                setting.0
+            ));
         }
         Err(err) => log::error(&format!("Could not read toast setting: {err}")),
         _ => {}
     }
 
-    notifier
-        .Show(&toast)
-        .map_err(|e| e.to_string())
+    notifier.Show(&toast).map_err(|e| e.to_string())
 }
 
 fn escape_xml(value: &str) -> String {

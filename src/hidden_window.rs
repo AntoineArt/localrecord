@@ -32,8 +32,7 @@ pub fn create() -> HWND {
 }
 
 unsafe fn register_class() {
-    static REGISTERED: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
+    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if REGISTERED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }

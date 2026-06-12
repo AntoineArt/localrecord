@@ -4,17 +4,18 @@
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/AntoineArt/localrecord)
 [![Release](https://img.shields.io/github/v/release/AntoineArt/localrecord)](https://github.com/AntoineArt/localrecord/releases/latest)
 
-Lightweight Windows tray app that records **microphone + desktop audio** (OBS-style WASAPI capture), saves a WAV file, and copies it to the clipboard.
+Lightweight Windows tray app that records **microphone + desktop audio** (OBS-style WASAPI capture), saves a compressed Opus file by default, and copies it to the clipboard.
 
 **Download:** [Latest release](https://github.com/AntoineArt/localrecord/releases/latest) · **Website:** [localrecord.doublea.engineering](https://localrecord.doublea.engineering)
 
 ## Why LocalRecord?
 
-Quick recordings without opening a full DAW or OBS. One hotkey toggles capture of both your mic and whatever is playing on your PC. When you stop, the WAV is saved and ready to paste into Audacity or similar tools.
+Quick recordings without opening a full DAW or OBS. One hotkey toggles capture of both your mic and whatever is playing on your PC. When you stop, the recording is saved and ready to paste or open in Audacity and similar tools.
 
 ## Features
 
 - **Dual capture** — WASAPI loopback (desktop/apps) + microphone, mixed to one file
+- **Compact Opus output** — default `.opus` format (~30 MB/hour at 64 kbps vs ~660 MB/hour WAV)
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu
 - **System tray** — start/stop, open recordings folder, change shortcut, startup toggle
 - **Recording indicator** — tray icon shows a red badge while recording
@@ -55,16 +56,26 @@ Recordings are saved to:
 
 `%LOCALAPPDATA%\localrecord\LocalRecord\recordings\`
 
-Settings (hotkey) are stored in:
+Settings are stored in:
 
 `%LOCALAPPDATA%\localrecord\LocalRecord\config\settings.ini`
+
+Example:
+
+```ini
+hotkey=Ctrl+Shift+R
+format=opus
+bitrate=64
+```
+
+Use `format=wav` for uncompressed WAV (paste-as-audio in Audacity). Use `bitrate=32`–`128` for Opus quality (default `64`).
 
 ## Tray menu
 
 | Item | Action |
 |------|--------|
 | Start recording | Begin capture |
-| Stop recording | Stop, save WAV, copy to clipboard |
+| Stop recording | Stop, save file, copy to clipboard |
 | Open recordings folder | Open output directory in Explorer |
 | Change shortcut | Pick a new global hotkey |
 | Launch at Windows startup | Toggle auto-start |
@@ -100,14 +111,14 @@ Same core approach as OBS on Windows:
 
 1. **Desktop audio** — WASAPI loopback on the default render device
 2. **Microphone** — WASAPI capture on the default input device
-3. **Mix** — both streams resampled to 48 kHz stereo and summed in software
-4. **Output** — 16-bit PCM WAV + clipboard (`CF_WAVE`)
+3. **Mix** — both streams mixed to 48 kHz stereo in software
+4. **Output** — Opus (`.opus`) by default, or 16-bit PCM WAV via settings; clipboard gets the file (WAV paste when using `format=wav`)
 
 ## Limitations
 
 - DRM-protected content may not capture
 - Apps in exclusive audio mode may be missing from loopback
-- Large recordings can be slow to copy to the clipboard (file is always saved on disk)
+- Large WAV recordings can be slow to copy to the clipboard (Opus copies the file path only; use `format=wav` if you need paste-as-audio)
 - Not all apps accept audio from the clipboard
 
 ## Contributing

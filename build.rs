@@ -11,7 +11,10 @@ fn main() {
     let mut res = winres::WindowsResource::new();
     res.set_icon("assets/icon.ico");
     res.set("ProductName", "LocalRecord");
-    res.set("FileDescription", "Record microphone and desktop audio to WAV");
+    res.set(
+        "FileDescription",
+        "Record microphone and desktop audio to WAV",
+    );
     res.set("CompanyName", "LocalRecord");
     res.set("LegalCopyright", "Copyright (C) LocalRecord");
     res.set("OriginalFilename", "localrecord.exe");

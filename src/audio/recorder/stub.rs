@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 pub struct RecordingResult {
-    pub samples: Vec<f32>,
+    pub path: PathBuf,
     pub duration_secs: f64,
+    pub sample_frames: u64,
 }
 
 pub struct Recorder;
