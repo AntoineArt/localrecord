@@ -156,59 +156,24 @@ fn mix_streams_opus(
     output_path: &PathBuf,
     bitrate_kbps: u32,
 ) -> Result<u64, String> {
-    use libopusenc::{
-        OpusEncApplication, OpusEncBitrate, OpusEncChannelMapping, OpusEncComments,
-        OpusEncSampleRate, OpusEncoder,
-    };
-
-    let path = output_path
-        .to_str()
-        .ok_or_else(|| "Recording path is not valid UTF-8".to_string())?;
-
-    let mut comments = OpusEncComments::create().map_err(|e| e.to_string())?;
-    comments
-        .add("ENCODER", "LocalRecord")
-        .map_err(|e| e.to_string())?;
-
-    let mut encoder = OpusEncoder::create_file(
-        path,
-        &mut comments,
-        OpusEncSampleRate::Hz48000,
-        2,
-        OpusEncChannelMapping::MonoStereo,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let bitrate = bitrate_kbps.saturating_mul(1000);
-    encoder
-        .set_bitrate(OpusEncBitrate::Explicit(bitrate))
-        .map_err(|e| e.to_string())?;
-    encoder.set_vbr(true).map_err(|e| e.to_string())?;
-    encoder
-        .set_application(OpusEncApplication::Audio)
-        .map_err(|e| e.to_string())?;
+    use crate::audio::opus::write_opus_recording;
 
     let mut mixer = Mixer::new(1.0, 0.85);
-    let mut sample_frames = 0u64;
 
-    while !stop.load(Ordering::SeqCst) {
+    write_opus_recording(output_path, bitrate_kbps, |write| {
+        while !stop.load(Ordering::SeqCst) {
+            pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
+            flush_mixer_to_sink(&mut mixer, |chunk| write(chunk))?;
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-        sample_frames += flush_mixer_to_sink(&mut mixer, |chunk| {
-            encoder.write_float(chunk, 2).map_err(|e| e.to_string())?;
-            Ok(())
-        })?;
-        thread::sleep(std::time::Duration::from_millis(5));
-    }
-
-    pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-    let tail = mixer.finish();
-    if !tail.is_empty() {
-        encoder.write_float(&tail, 2).map_err(|e| e.to_string())?;
-        sample_frames += (tail.len() / 2) as u64;
-    }
-
-    encoder.drain().map_err(|e| e.to_string())?;
-    Ok(sample_frames)
+        let tail = mixer.finish();
+        if !tail.is_empty() {
+            write(&tail)?;
+        }
+        Ok(())
+    })
 }
 
 fn pump_mixer_inputs(

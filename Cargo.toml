@@ -19,7 +19,8 @@ winit = "0.30"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.22"
-libopusenc = "0.2.1"
+audiopus = "0.2.0"
+ogg = "0.9.2"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_Com",
