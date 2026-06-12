@@ -29,7 +29,9 @@ pub fn write_opus_recording(
     let mut encoder = Encoder::new(SampleRate::Hz48000, Channels::Stereo, Application::Audio)
         .map_err(|e| e.to_string())?;
     encoder
-        .set_bitrate(Bitrate::Bits(u32::from(bitrate_kbps.saturating_mul(1000))))
+        .set_bitrate(Bitrate::BitsPerSecond(
+            i32::try_from(bitrate_kbps.saturating_mul(1000)).unwrap_or(64_000),
+        ))
         .map_err(|e| e.to_string())?;
     encoder.enable_vbr().map_err(|e| e.to_string())?;
 

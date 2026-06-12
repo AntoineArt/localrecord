@@ -40,6 +40,11 @@ impl Mixer {
         self.output.drain(..end).collect()
     }
 
+    pub fn drain_remaining(&mut self) -> Vec<f32> {
+        self.drain_mixed();
+        std::mem::take(&mut self.output)
+    }
+
     pub fn finish(mut self) -> Vec<f32> {
         self.drain_mixed();
         self.output

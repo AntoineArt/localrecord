@@ -168,7 +168,7 @@ fn mix_streams_opus(
         }
 
         pump_mixer_inputs(&mut mixer, &loopback_rx, &mic_rx);
-        let tail = mixer.finish();
+        let tail = mixer.drain_remaining();
         if !tail.is_empty() {
             write(&tail)?;
         }
