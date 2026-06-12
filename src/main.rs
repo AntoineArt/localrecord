@@ -18,12 +18,7 @@ mod settings;
 mod startup;
 mod tray;
 
-use app::App;
-
-enum UserEvent {
-    Menu(tray_icon::menu::MenuEvent),
-    Tray(tray_icon::TrayIconEvent),
-}
+use app::{App, UserEvent};
 
 fn main() {
     #[cfg(not(windows))]
@@ -51,17 +46,23 @@ fn run() {
         .build()
         .expect("event loop");
 
-    let proxy = event_loop.create_proxy();
-    tray_icon::TrayIconEvent::set_event_handler(Some(move |event| {
-        let _ = proxy.send_event(UserEvent::Tray(event));
+    let app_proxy = event_loop.create_proxy();
+
+    tray_icon::TrayIconEvent::set_event_handler(Some({
+        let proxy = event_loop.create_proxy();
+        move |event| {
+            let _ = proxy.send_event(UserEvent::Tray(event));
+        }
     }));
 
-    let proxy = event_loop.create_proxy();
-    tray_icon::menu::MenuEvent::set_event_handler(Some(move |event| {
-        let _ = proxy.send_event(UserEvent::Menu(event));
+    tray_icon::menu::MenuEvent::set_event_handler(Some({
+        let proxy = event_loop.create_proxy();
+        move |event| {
+            let _ = proxy.send_event(UserEvent::Menu(event));
+        }
     }));
 
-    let mut app = App::new(clipboard_owner).expect("initialize LocalRecord");
+    let mut app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
     log::info("LocalRecord started");
 
     let _ = event_loop.run(move |event, elwt| {
@@ -71,6 +72,9 @@ fn run() {
             }
             winit::event::Event::UserEvent(UserEvent::Tray(tray_event)) => {
                 app.handle_tray_event(&tray_event);
+            }
+            winit::event::Event::UserEvent(UserEvent::RecordingFinished(outcome)) => {
+                app.handle_recording_finished(outcome);
             }
             winit::event::Event::AboutToWait => app.poll_hotkey(),
             winit::event::Event::WindowEvent {

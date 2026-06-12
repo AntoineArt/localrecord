@@ -4,6 +4,7 @@ use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 use crate::config;
 use crate::icon;
 use crate::log;
+use crate::notification;
 use crate::startup;
 
 pub const MENU_START: &str = "start_recording";
@@ -12,6 +13,8 @@ pub const MENU_OPEN: &str = "open_folder";
 pub const MENU_STARTUP: &str = "toggle_startup";
 pub const MENU_HOTKEY: &str = "change_hotkey";
 pub const MENU_EXIT: &str = "exit";
+
+const TOOLTIP_MAX_CHARS: usize = 120;
 
 pub struct TrayController {
     tray: TrayIcon,
@@ -72,6 +75,22 @@ impl TrayController {
     }
 
     pub fn set_recording(&mut self, recording: bool) -> Result<(), String> {
+        self.sync_recording_state(recording)
+    }
+
+    pub fn set_hotkey_label(&mut self, label: &str) -> Result<(), String> {
+        self.hotkey_label = label.to_string();
+        self.hotkey_item
+            .set_text(format!("Change shortcut ({label})"));
+        self.sync_recording_state(false)
+    }
+
+    /// Re-applies icon, menu items, and tooltip after notifications (Shell_NotifyIconW can desync state).
+    pub fn refresh_after_notification(&mut self, recording: bool) -> Result<(), String> {
+        self.sync_recording_state(recording)
+    }
+
+    fn sync_recording_state(&mut self, recording: bool) -> Result<(), String> {
         self.start_item.set_enabled(!recording);
         self.stop_item.set_enabled(recording);
         self.tray
@@ -81,37 +100,29 @@ impl TrayController {
     }
 
     fn update_tooltip(&self, recording: bool) -> Result<(), String> {
+        let tooltip = if recording {
+            "LocalRecord: recording...".to_string()
+        } else {
+            format!("LocalRecord ({})", self.hotkey_label)
+        };
         self.tray
-            .set_tooltip(Some(if recording {
-                "LocalRecord: recording...".to_string()
-            } else {
-                format!("LocalRecord ({})", self.hotkey_label)
-            }))
+            .set_tooltip(Some(truncate_tooltip(&tooltip)))
             .map_err(|e| e.to_string())
     }
 
-    pub fn set_hotkey_label(&mut self, label: &str) -> Result<(), String> {
-        self.hotkey_label = label.to_string();
-        self.hotkey_item
-            .set_text(format!("Change shortcut ({label})"));
-        self.update_tooltip(false)
+    pub fn notify(&mut self, headline: &str, recording: bool) {
+        let _ = notification::show_message(headline, "");
+        let _ = self.refresh_after_notification(recording);
     }
 
-    pub fn notify(&self, message: &str) {
-        let _ = crate::balloon::show("LocalRecord", message);
-        let _ = self.tray.set_tooltip(Some(message));
-    }
-
-    pub fn notify_recording_saved(&self, path: &std::path::Path, clipboard_ok: bool) {
-        let _ = crate::notification::show_recording_saved(path, clipboard_ok);
-
-        let headline = if clipboard_ok {
-            "Recording saved and copied to clipboard"
-        } else {
-            "Recording saved (clipboard copy failed)"
-        };
-        let tooltip = format!("{headline}: {}", path.display());
-        let _ = self.tray.set_tooltip(Some(tooltip));
+    pub fn notify_recording_saved(
+        &mut self,
+        path: &std::path::Path,
+        clipboard_ok: bool,
+        recording: bool,
+    ) {
+        let _ = notification::show_recording_saved(path, clipboard_ok);
+        let _ = self.refresh_after_notification(recording);
     }
 
     pub fn handle_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {
@@ -139,6 +150,16 @@ impl TrayController {
     pub fn set_startup_checked(&mut self, enabled: bool) {
         let _ = self.startup_item.set_checked(enabled);
     }
+}
+
+fn truncate_tooltip(text: &str) -> String {
+    if text.chars().count() <= TOOLTIP_MAX_CHARS {
+        return text.to_string();
+    }
+    text.chars()
+        .take(TOOLTIP_MAX_CHARS.saturating_sub(1))
+        .chain(std::iter::once('…'))
+        .collect()
 }
 
 pub enum TrayAction {
@@ -187,7 +208,6 @@ fn open_folder_windows(path: &std::path::Path) -> Result<(), String> {
             SW_SHOWNORMAL,
         );
 
-        // ShellExecuteW returns a value <= 32 on failure.
         if result.0 as isize <= 32 {
             return Err(format!("ShellExecuteW failed (code {})", result.0 as isize));
         }

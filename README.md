@@ -18,7 +18,7 @@ Quick recordings without opening a full DAW or OBS. One hotkey toggles capture o
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu
 - **System tray** — start/stop, open recordings folder, change shortcut, startup toggle
 - **Recording indicator** — tray icon shows a red badge while recording
-- **Clipboard export** — audio copied as `WAVE` on stop
+- **Toast notification on save** — filename and folder shown clearly when a recording finishes
 - **No console window** — runs quietly in the notification area
 - **Low idle cost** — no audio threads until you record
 

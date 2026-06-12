@@ -3,7 +3,12 @@
 mod imp;
 
 #[cfg(windows)]
-pub use imp::{init, show_recording_saved};
+pub use imp::{init, show_message, show_recording_saved};
+
+#[cfg(not(windows))]
+pub fn show_message(_headline: &str, _detail: &str) -> bool {
+    false
+}
 
 #[cfg(not(windows))]
 pub fn init() {}

@@ -6,8 +6,8 @@ use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
-use crate::log;
 use crate::balloon;
+use crate::log;
 
 pub const APP_ID: &str = "com.localrecord.LocalRecord";
 
@@ -32,14 +32,26 @@ pub fn show_recording_saved(path: &Path, clipboard_ok: bool) -> bool {
     } else {
         "Recording saved (clipboard copy failed)"
     };
-    let path_text = path.display().to_string();
-    let body = format!("{headline}\n{path_text}");
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let folder = path
+        .parent()
+        .map(|parent| parent.display().to_string())
+        .unwrap_or_default();
 
-    if balloon::show("LocalRecord", &body).is_ok() {
+    if show_toast("LocalRecord", headline, &filename, &folder).is_ok() {
         return true;
     }
 
-    if show_toast("LocalRecord", headline, &path_text).is_ok() {
+    let balloon_body = if folder.is_empty() {
+        format!("{headline}\n{filename}")
+    } else {
+        format!("{headline}\n{filename}\n{folder}")
+    };
+
+    if balloon::show("LocalRecord", &balloon_body).is_ok() {
         return true;
     }
 
@@ -47,13 +59,38 @@ pub fn show_recording_saved(path: &Path, clipboard_ok: bool) -> bool {
     false
 }
 
-fn show_toast(title: &str, line1: &str, line2: &str) -> Result<(), String> {
-    let xml = format!(
-        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text><text>{}</text></binding></visual></toast>"#,
-        escape_xml(title),
-        escape_xml(line1),
-        escape_xml(line2),
-    );
+/// Short status notification (errors, settings changes, etc.).
+pub fn show_message(headline: &str, detail: &str) -> bool {
+    if show_toast("LocalRecord", headline, detail, "").is_ok() {
+        return true;
+    }
+
+    let body = if detail.is_empty() {
+        headline.to_string()
+    } else {
+        format!("{headline}\n{detail}")
+    };
+
+    balloon::show("LocalRecord", &body).is_ok()
+}
+
+fn show_toast(title: &str, headline: &str, detail: &str, subdetail: &str) -> Result<(), String> {
+    let xml = if subdetail.is_empty() {
+        format!(
+            r#"<toast><visual><binding template="ToastGeneric"><text hint-maxLines="1">{}</text><text hint-style="subtitle">{}</text><text hint-style="body" hint-wrap="true">{}</text></binding></visual></toast>"#,
+            escape_xml(title),
+            escape_xml(headline),
+            escape_xml(detail),
+        )
+    } else {
+        format!(
+            r#"<toast><visual><binding template="ToastGeneric"><text hint-maxLines="1">{}</text><text hint-style="subtitle">{}</text><text hint-style="body" hint-wrap="true">{}</text><text hint-style="captionSubtle" hint-wrap="true">{}</text></binding></visual></toast>"#,
+            escape_xml(title),
+            escape_xml(headline),
+            escape_xml(detail),
+            escape_xml(subdetail),
+        )
+    };
 
     let document = XmlDocument::new().map_err(|e| e.to_string())?;
     document

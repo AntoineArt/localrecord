@@ -1,4 +1,8 @@
+use std::path::PathBuf;
+use std::thread;
+
 use windows::Win32::Foundation::HWND;
+use winit::event_loop::EventLoopProxy;
 
 use crate::audio::{self, Recorder};
 use crate::clipboard;
@@ -8,11 +12,24 @@ use crate::log;
 use crate::startup;
 use crate::tray::{TrayAction, TrayController};
 
+pub enum UserEvent {
+    Menu(tray_icon::menu::MenuEvent),
+    Tray(tray_icon::TrayIconEvent),
+    RecordingFinished(RecordingFinishedOutcome),
+}
+
+pub enum RecordingFinishedOutcome {
+    Saved { path: PathBuf, clipboard_ok: bool },
+    Empty { duration_secs: f64 },
+    Failed { message: String },
+}
+
 enum AppState {
     Idle,
     Recording {
         recorder: Recorder,
     },
+    Finalizing,
 }
 
 pub struct App {
@@ -20,10 +37,11 @@ pub struct App {
     hotkeys: HotkeyManager,
     state: AppState,
     clipboard_owner: HWND,
+    event_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl App {
-    pub fn new(clipboard_owner: HWND) -> Result<Self, String> {
+    pub fn new(clipboard_owner: HWND, event_proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
         startup::ensure_enabled();
         let hotkeys = HotkeyManager::from_settings()?;
         let hotkey_label = hotkeys.label();
@@ -33,6 +51,7 @@ impl App {
             hotkeys,
             state: AppState::Idle,
             clipboard_owner,
+            event_proxy,
         })
     }
 
@@ -54,6 +73,28 @@ impl App {
         }
     }
 
+    pub fn handle_recording_finished(&mut self, outcome: RecordingFinishedOutcome) {
+        self.state = AppState::Idle;
+
+        match outcome {
+            RecordingFinishedOutcome::Saved { path, clipboard_ok } => {
+                log::info(&format!(
+                    "Recording saved to {}",
+                    path.display()
+                ));
+                self.tray.notify_recording_saved(&path, clipboard_ok, false);
+            }
+            RecordingFinishedOutcome::Empty { duration_secs } => {
+                log::error(&format!("Recording was empty ({duration_secs:.1}s)"));
+                self.tray.notify("Recording was empty", false);
+            }
+            RecordingFinishedOutcome::Failed { message } => {
+                log::error(&message);
+                self.tray.notify(&message, false);
+            }
+        }
+    }
+
     fn handle_tray_action(&mut self, action: TrayAction) {
         match action {
             TrayAction::Start => self.start_recording(),
@@ -66,15 +107,15 @@ impl App {
     }
 
     fn change_hotkey(&mut self) {
-        if matches!(self.state, AppState::Recording { .. }) {
-            self.tray.notify("Stop recording before changing shortcut");
+        if matches!(self.state, AppState::Recording { .. } | AppState::Finalizing) {
+            self.tray.notify("Stop recording before changing shortcut", false);
             return;
         }
 
         let current = self.hotkeys.binding();
         if let Err(err) = self.hotkeys.pause() {
             log::error(&format!("Failed to pause shortcut for picker: {err}"));
-            self.tray.notify("Could not open shortcut picker");
+            self.tray.notify("Could not open shortcut picker", false);
             return;
         }
 
@@ -95,7 +136,7 @@ impl App {
                         let label = self.hotkeys.label();
                         let _ = self.tray.set_hotkey_label(&label);
                         let msg = format!("Shortcut changed to {label}");
-                        self.tray.notify(&msg);
+                        self.tray.notify(&msg, false);
                         log::info(&msg);
                     }
                     Err(err) => {
@@ -106,7 +147,7 @@ impl App {
                             ));
                         }
                         self.hotkeys.drain_pending_events();
-                        self.tray.notify("Could not register that shortcut");
+                        self.tray.notify("Could not register that shortcut", false);
                     }
                 }
             }
@@ -129,12 +170,12 @@ impl App {
                 } else {
                     "LocalRecord startup disabled"
                 };
-                self.tray.notify(msg);
+                self.tray.notify(msg, false);
                 log::info(msg);
             }
             Err(err) => {
                 log::error(&format!("Startup toggle failed: {err}"));
-                self.tray.notify("Could not update startup setting");
+                self.tray.notify("Could not update startup setting", false);
             }
         }
     }
@@ -142,12 +183,12 @@ impl App {
     fn toggle_recording(&mut self) {
         match &self.state {
             AppState::Idle => self.start_recording(),
-            AppState::Recording { .. } => self.stop_recording(),
+            AppState::Recording { .. } | AppState::Finalizing => self.stop_recording(),
         }
     }
 
     fn start_recording(&mut self) {
-        if matches!(self.state, AppState::Recording { .. }) {
+        if !matches!(self.state, AppState::Idle) {
             return;
         }
 
@@ -159,66 +200,63 @@ impl App {
             }
             Err(err) => {
                 log::error(&format!("Failed to start recording: {err}"));
-                self.tray.notify("Could not start recording");
+                self.tray.notify("Could not start recording", false);
             }
         }
     }
 
     fn stop_recording(&mut self) {
         let AppState::Recording { recorder } =
-            std::mem::replace(&mut self.state, AppState::Idle)
+            std::mem::replace(&mut self.state, AppState::Finalizing)
         else {
             return;
         };
 
         let _ = self.tray.set_recording(false);
+        let owner = self.clipboard_owner.0 as isize;
+        let proxy = self.event_proxy.clone();
 
-        match recorder.stop() {
-            Ok(result) => {
-                if result.samples.is_empty() {
-                    log::error(&format!(
-                        "Recording was empty ({:.1}s)",
-                        result.duration_secs
-                    ));
-                    self.tray.notify("Recording was empty");
-                    return;
-                }
+        thread::spawn(move || {
+            let outcome = finalize_recording(recorder, owner);
+            let _ = proxy.send_event(UserEvent::RecordingFinished(outcome));
+        });
+    }
+}
 
-                let path = config::recording_filename();
-                if let Err(err) = audio::wav::save_wav(&path, &result.samples) {
-                    log::error(&format!("Failed to save recording: {err}"));
-                    self.tray.notify("Failed to save recording");
-                    return;
-                }
-
-                log::info(&format!(
-                    "Saved {:.1}s recording to {}",
-                    result.duration_secs,
-                    path.display()
-                ));
-
-                let wav_bytes = std::fs::read(&path).unwrap_or_else(|_| {
-                    audio::wav::encode_wav(&result.samples)
-                });
-
-                match clipboard::copy_recording_to_clipboard(
-                    &wav_bytes,
-                    &path,
-                    self.clipboard_owner,
-                ) {
-                    Ok(()) => {
-                        self.tray.notify_recording_saved(&path, true);
-                    }
-                    Err(err) => {
-                        log::error(&format!("Clipboard copy failed: {err}"));
-                        self.tray.notify_recording_saved(&path, false);
-                    }
-                }
-            }
-            Err(err) => {
-                log::error(&format!("Failed to stop recording: {err}"));
-                self.tray.notify("Failed to stop recording");
-            }
+fn finalize_recording(recorder: Recorder, clipboard_owner: isize) -> RecordingFinishedOutcome {
+    let result = match recorder.stop() {
+        Ok(result) => result,
+        Err(err) => {
+            return RecordingFinishedOutcome::Failed {
+                message: format!("Failed to stop recording: {err}"),
+            };
         }
+    };
+
+    if result.samples.is_empty() {
+        return RecordingFinishedOutcome::Empty {
+            duration_secs: result.duration_secs,
+        };
+    }
+
+    let path = config::recording_filename();
+    if let Err(err) = audio::wav::save_wav(&path, &result.samples) {
+        return RecordingFinishedOutcome::Failed {
+            message: format!("Failed to save recording: {err}"),
+        };
+    }
+
+    let wav_bytes = std::fs::read(&path).unwrap_or_else(|_| audio::wav::encode_wav(&result.samples));
+
+    let clipboard_ok = clipboard::copy_recording_to_clipboard(
+        &wav_bytes,
+        &path,
+        HWND(clipboard_owner as *mut _),
+    )
+    .is_ok();
+
+    RecordingFinishedOutcome::Saved {
+        path,
+        clipboard_ok,
     }
 }

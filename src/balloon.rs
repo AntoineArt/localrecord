@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconGetRect, Shell_NotifyIconW, NIF_INFO, NIF_TIP, NIM_MODIFY, NIM_SETVERSION,
+    Shell_NotifyIconGetRect, Shell_NotifyIconW, NIF_INFO, NIM_MODIFY, NIM_SETVERSION,
     NIIF_INFO, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -27,7 +27,7 @@ pub fn show(title: &str, message: &str) -> Result<(), String> {
 }
 
 fn show_on_target(target: TrayTarget, title: &str, message: &str) -> Result<(), String> {
-    let hwnd = HWND(target.hwnd as *mut _);
+    let hwnd = HWND(target.hwnd as isize as *mut _);
     ensure_notifyicon_version(hwnd, target.id)?;
 
     let title_wide = truncate_wide(title, 63);
@@ -42,7 +42,8 @@ fn show_on_target(target: TrayTarget, title: &str, message: &str) -> Result<(), 
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
         uID: target.id,
-        uFlags: NIF_INFO | NIF_TIP,
+        // Only NIF_INFO — never NIF_TIP without szTip (that corrupts the tray icon / menu).
+        uFlags: NIF_INFO,
         dwInfoFlags: NIIF_INFO,
         szInfoTitle: info_title,
         szInfo: info_text,
@@ -75,9 +76,7 @@ fn ensure_notifyicon_version(hwnd: HWND, id: u32) -> Result<(), String> {
         uID: id,
         ..Default::default()
     };
-    unsafe {
-        nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-    }
+    nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
 
     unsafe {
         if Shell_NotifyIconW(NIM_SETVERSION, &mut nid as *mut _) != TRUE {
