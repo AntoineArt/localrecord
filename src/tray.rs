@@ -98,7 +98,20 @@ impl TrayController {
     }
 
     pub fn notify(&self, message: &str) {
+        let _ = crate::balloon::show("LocalRecord", message);
         let _ = self.tray.set_tooltip(Some(message));
+    }
+
+    pub fn notify_recording_saved(&self, path: &std::path::Path, clipboard_ok: bool) {
+        let _ = crate::notification::show_recording_saved(path, clipboard_ok);
+
+        let headline = if clipboard_ok {
+            "Recording saved and copied to clipboard"
+        } else {
+            "Recording saved (clipboard copy failed)"
+        };
+        let tooltip = format!("{headline}: {}", path.display());
+        let _ = self.tray.set_tooltip(Some(tooltip));
     }
 
     pub fn handle_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {

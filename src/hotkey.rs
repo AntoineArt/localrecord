@@ -36,9 +36,7 @@ impl HotkeyManager {
             return Ok(());
         }
 
-        self.manager
-            .unregister(self.hotkey)
-            .map_err(|e| e.to_string())?;
+        let _ = self.manager.unregister(self.hotkey);
         self.manager
             .register(new_hotkey)
             .map_err(|e| e.to_string())?;
@@ -49,6 +47,22 @@ impl HotkeyManager {
         settings.save()?;
 
         Ok(())
+    }
+
+    pub fn pause(&mut self) -> Result<(), String> {
+        self.manager
+            .unregister(self.hotkey)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn resume(&mut self) -> Result<(), String> {
+        self.manager
+            .register(self.hotkey)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn drain_pending_events(&self) {
+        while GlobalHotKeyEvent::receiver().try_recv().is_ok() {}
     }
 
     pub fn poll_toggle(&self) -> bool {

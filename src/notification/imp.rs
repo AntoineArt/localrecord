@@ -7,8 +7,9 @@ use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 use crate::log;
+use crate::balloon;
 
-const APP_ID: &str = "com.localrecord.LocalRecord";
+pub const APP_ID: &str = "com.localrecord.LocalRecord";
 
 pub fn init() {
     unsafe {
@@ -18,9 +19,13 @@ pub fn init() {
             log::error(&format!("Failed to set AppUserModelID: {err}"));
         }
     }
+
+    if let Err(err) = ensure_start_menu_shortcut() {
+        log::error(&format!("Start Menu shortcut for notifications: {err}"));
+    }
 }
 
-/// Shows a Windows toast when a recording finishes. Returns true if the toast was shown.
+/// Shows a visible notification when a recording finishes.
 pub fn show_recording_saved(path: &Path, clipboard_ok: bool) -> bool {
     let headline = if clipboard_ok {
         "Recording saved and copied to clipboard"
@@ -28,14 +33,18 @@ pub fn show_recording_saved(path: &Path, clipboard_ok: bool) -> bool {
         "Recording saved (clipboard copy failed)"
     };
     let path_text = path.display().to_string();
+    let body = format!("{headline}\n{path_text}");
 
-    match show_toast("LocalRecord", headline, &path_text) {
-        Ok(()) => true,
-        Err(err) => {
-            log::error(&format!("Toast notification failed: {err}"));
-            false
-        }
+    if balloon::show("LocalRecord", &body).is_ok() {
+        return true;
     }
+
+    if show_toast("LocalRecord", headline, &path_text).is_ok() {
+        return true;
+    }
+
+    log::error("All notification methods failed for recording saved");
+    false
 }
 
 fn show_toast(title: &str, line1: &str, line2: &str) -> Result<(), String> {
@@ -57,6 +66,14 @@ fn show_toast(title: &str, line1: &str, line2: &str) -> Result<(), String> {
             .or_else(|_| ToastNotificationManager::CreateToastNotifier())
             .map_err(|e| e.to_string())?;
 
+    match notifier.Setting() {
+        Ok(setting) if setting.0 != 1 => {
+            return Err(format!("Toast notifications disabled (setting={})", setting.0));
+        }
+        Err(err) => log::error(&format!("Could not read toast setting: {err}")),
+        _ => {}
+    }
+
     notifier
         .Show(&toast)
         .map_err(|e| e.to_string())
@@ -69,4 +86,66 @@ fn escape_xml(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+fn ensure_start_menu_shortcut() -> Result<(), String> {
+    use std::env;
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    let appdata = env::var("APPDATA").map_err(|e| e.to_string())?;
+    let shortcut_dir = Path::new(&appdata)
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs");
+    std::fs::create_dir_all(&shortcut_dir).map_err(|e| e.to_string())?;
+
+    let shortcut_path = shortcut_dir.join("LocalRecord.lnk");
+    if shortcut_path.exists() {
+        return Ok(());
+    }
+
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let work_dir = exe
+        .parent()
+        .ok_or("Could not resolve executable directory")?
+        .to_path_buf();
+
+    let create_only = format!(
+        r#"
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut('{shortcut}')
+$Shortcut.TargetPath = '{target}'
+$Shortcut.WorkingDirectory = '{workdir}'
+$Shortcut.Description = 'LocalRecord'
+$Shortcut.Save()
+"#,
+        shortcut = shortcut_path.display().to_string().replace('\'', "''"),
+        target = exe.display().to_string().replace('\'', "''"),
+        workdir = work_dir.display().to_string().replace('\'', "''"),
+    );
+
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &create_only,
+        ])
+        .creation_flags(0x08000000)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if !status.success() {
+        return Err(format!("PowerShell shortcut creation failed: {status}"));
+    }
+
+    log::info(&format!(
+        "Created Start Menu shortcut: {}",
+        shortcut_path.display()
+    ));
+    Ok(())
 }

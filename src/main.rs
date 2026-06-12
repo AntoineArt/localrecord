@@ -1,5 +1,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod balloon;
+
 mod app;
 mod audio;
 mod clipboard;

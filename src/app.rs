@@ -5,7 +5,6 @@ use crate::clipboard;
 use crate::config;
 use crate::hotkey::{self, HotkeyManager};
 use crate::log;
-use crate::notification;
 use crate::overlay::{OverlayHandle, RecordingOverlay};
 use crate::startup;
 use crate::tray::{TrayAction, TrayController};
@@ -75,22 +74,43 @@ impl App {
         }
 
         let current = self.hotkeys.binding();
-        let Some(new_binding) = hotkey::pick_hotkey_interactive(&current) else {
-            log::info("Shortcut change cancelled");
+        if let Err(err) = self.hotkeys.pause() {
+            log::error(&format!("Failed to pause shortcut for picker: {err}"));
+            self.tray.notify("Could not open shortcut picker");
             return;
-        };
+        }
 
-        match self.hotkeys.replace(&new_binding) {
-            Ok(()) => {
-                let label = self.hotkeys.label();
-                let _ = self.tray.set_hotkey_label(&label);
-                let msg = format!("Shortcut changed to {label}");
-                self.tray.notify(&msg);
-                log::info(&msg);
+        let picked = hotkey::pick_hotkey_interactive(&current);
+
+        match picked {
+            None => {
+                if let Err(err) = self.hotkeys.resume() {
+                    log::error(&format!("Failed to restore shortcut after cancel: {err}"));
+                }
+                self.hotkeys.drain_pending_events();
+                log::info("Shortcut change cancelled");
             }
-            Err(err) => {
-                log::error(&format!("Failed to set shortcut: {err}"));
-                self.tray.notify("Could not register that shortcut");
+            Some(new_binding) => {
+                match self.hotkeys.replace(&new_binding) {
+                    Ok(()) => {
+                        self.hotkeys.drain_pending_events();
+                        let label = self.hotkeys.label();
+                        let _ = self.tray.set_hotkey_label(&label);
+                        let msg = format!("Shortcut changed to {label}");
+                        self.tray.notify(&msg);
+                        log::info(&msg);
+                    }
+                    Err(err) => {
+                        log::error(&format!("Failed to set shortcut: {err}"));
+                        if let Err(resume_err) = self.hotkeys.resume() {
+                            log::error(&format!(
+                                "Failed to restore previous shortcut: {resume_err}"
+                            ));
+                        }
+                        self.hotkeys.drain_pending_events();
+                        self.tray.notify("Could not register that shortcut");
+                    }
+                }
             }
         }
     }
@@ -191,21 +211,11 @@ impl App {
                     self.clipboard_owner,
                 ) {
                     Ok(()) => {
-                        if !notification::show_recording_saved(&path, true) {
-                            self.tray.notify(&format!(
-                                "Saved to clipboard: {}",
-                                path.display()
-                            ));
-                        }
+                        self.tray.notify_recording_saved(&path, true);
                     }
                     Err(err) => {
                         log::error(&format!("Clipboard copy failed: {err}"));
-                        if !notification::show_recording_saved(&path, false) {
-                            self.tray.notify(&format!(
-                                "Saved to {} (clipboard copy failed)",
-                                path.display()
-                            ));
-                        }
+                        self.tray.notify_recording_saved(&path, false);
                     }
                 }
             }
