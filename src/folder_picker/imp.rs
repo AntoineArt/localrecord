@@ -6,9 +6,9 @@ use windows::core::{Interface, PCWSTR};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::UI::Shell::Common::{FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
 use windows::Win32::UI::Shell::{
     FileOpenDialog, IFileDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName,
+    FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
 };
 
 use crate::log;

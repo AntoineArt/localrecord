@@ -19,8 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CREATESTRUCTW,
     CW_USEDEFAULT, GWLP_USERDATA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER, SW_SHOWNORMAL,
     WINDOW_EX_STYLE, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_SYSKEYDOWN, WNDCLASSW,
-    WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_OVERLAPPED, WS_SYSMENU, WS_VISIBLE,
-    HWND_TOP,
+    WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_OVERLAPPED,     WS_SYSMENU, WS_VISIBLE,
 };
 
 use crate::log;
@@ -98,7 +97,6 @@ fn run_picker(current: &str) -> Option<String> {
         };
 
         center_window(hwnd);
-        let _ = SetWindowPos(hwnd, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOZORDER);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(hwnd);
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -217,7 +215,7 @@ unsafe fn center_window(hwnd: HWND) {
     let y = (screen_h - WINDOW_HEIGHT) / 2;
     let _ = SetWindowPos(
         hwnd,
-        None,
+        HWND::default(),
         x,
         y,
         WINDOW_WIDTH,
