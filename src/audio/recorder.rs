@@ -7,7 +7,7 @@ mod imp;
 mod stub;
 
 #[cfg(windows)]
-pub use imp::{Recorder, RecordingResult};
+pub use imp::Recorder;
 
 #[cfg(not(windows))]
-pub use stub::{Recorder, RecordingResult};
+pub use stub::Recorder;

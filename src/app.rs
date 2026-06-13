@@ -4,7 +4,7 @@ use std::thread;
 use windows::Win32::Foundation::HWND;
 use winit::event_loop::EventLoopProxy;
 
-use crate::audio::{self, Recorder};
+use crate::audio::Recorder;
 use crate::clipboard;
 use crate::config;
 use crate::folder_picker;

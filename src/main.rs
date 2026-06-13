@@ -19,8 +19,6 @@ mod settings;
 mod startup;
 mod tray;
 
-use app::{App, UserEvent};
-
 fn main() {
     #[cfg(not(windows))]
     {
@@ -35,6 +33,43 @@ fn main() {
 
 #[cfg(windows)]
 fn run() {
+    use app::{App, UserEvent};
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::ActiveEventLoop;
+    use winit::window::WindowId;
+
+    struct LocalRecordApp {
+        app: App,
+    }
+
+    impl ApplicationHandler<UserEvent> for LocalRecordApp {
+        fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+        fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+            match event {
+                UserEvent::Menu(menu_event) => self.app.handle_menu_event(&menu_event),
+                UserEvent::Tray(tray_event) => self.app.handle_tray_event(&tray_event),
+                UserEvent::RecordingFinished(outcome) => self.app.handle_recording_finished(outcome),
+            }
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            if matches!(event, WindowEvent::CloseRequested) {
+                event_loop.exit();
+            }
+        }
+
+        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+            self.app.poll_hotkey();
+        }
+    }
+
     if !acquire_single_instance() {
         std::process::exit(0);
     }
@@ -63,26 +98,11 @@ fn run() {
         }
     }));
 
-    let mut app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
+    let app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
     log::info("LocalRecord started");
 
-    let _ = event_loop.run(move |event, elwt| match event {
-        winit::event::Event::UserEvent(UserEvent::Menu(menu_event)) => {
-            app.handle_menu_event(&menu_event);
-        }
-        winit::event::Event::UserEvent(UserEvent::Tray(tray_event)) => {
-            app.handle_tray_event(&tray_event);
-        }
-        winit::event::Event::UserEvent(UserEvent::RecordingFinished(outcome)) => {
-            app.handle_recording_finished(outcome);
-        }
-        winit::event::Event::AboutToWait => app.poll_hotkey(),
-        winit::event::Event::WindowEvent {
-            event: winit::event::WindowEvent::CloseRequested,
-            ..
-        } => elwt.exit(),
-        _ => {}
-    });
+    let mut handler = LocalRecordApp { app };
+    let _ = event_loop.run_app(&mut handler);
 }
 
 #[cfg(windows)]
