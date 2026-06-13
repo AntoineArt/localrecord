@@ -10,6 +10,7 @@ use crate::startup;
 pub const MENU_START: &str = "start_recording";
 pub const MENU_STOP: &str = "stop_recording";
 pub const MENU_OPEN: &str = "open_folder";
+pub const MENU_CHANGE_FOLDER: &str = "change_folder";
 pub const MENU_STARTUP: &str = "toggle_startup";
 pub const MENU_HOTKEY: &str = "change_hotkey";
 pub const MENU_EXIT: &str = "exit";
@@ -30,6 +31,8 @@ impl TrayController {
         let start_item = MenuItem::with_id(MENU_START, "Start recording", true, None);
         let stop_item = MenuItem::with_id(MENU_STOP, "Stop recording", recording, None);
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
+        let change_folder_item =
+            MenuItem::with_id(MENU_CHANGE_FOLDER, "Change recordings folder...", true, None);
         let hotkey_item = MenuItem::with_id(
             MENU_HOTKEY,
             format!("Change shortcut ({hotkey_label})"),
@@ -50,6 +53,7 @@ impl TrayController {
             &stop_item,
             &PredefinedMenuItem::separator(),
             &open_item,
+            &change_folder_item,
             &hotkey_item,
             &startup_item,
             &PredefinedMenuItem::separator(),
@@ -133,6 +137,7 @@ impl TrayController {
                 open_recordings_folder();
                 None
             }
+            MENU_CHANGE_FOLDER => Some(TrayAction::ChangeRecordingsFolder),
             MENU_STARTUP => Some(TrayAction::ToggleStartup),
             MENU_HOTKEY => Some(TrayAction::ChangeHotkey),
             MENU_EXIT => Some(TrayAction::Exit),
@@ -168,6 +173,7 @@ pub enum TrayAction {
     Toggle,
     ToggleStartup,
     ChangeHotkey,
+    ChangeRecordingsFolder,
     Exit,
 }
 

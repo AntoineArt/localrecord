@@ -6,8 +6,11 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::audio::{self, Recorder};
 use crate::clipboard;
+use crate::config;
+use crate::folder_picker;
 use crate::hotkey::{self, HotkeyManager};
 use crate::log;
+use crate::settings::Settings;
 use crate::startup;
 use crate::tray::{TrayAction, TrayController};
 
@@ -99,6 +102,7 @@ impl App {
             TrayAction::Toggle => self.toggle_recording(),
             TrayAction::ToggleStartup => self.toggle_startup(),
             TrayAction::ChangeHotkey => self.change_hotkey(),
+            TrayAction::ChangeRecordingsFolder => self.change_recordings_folder(),
             TrayAction::Exit => std::process::exit(0),
         }
     }
@@ -148,6 +152,38 @@ impl App {
                     }
                     self.hotkeys.drain_pending_events();
                     self.tray.notify("Could not register that shortcut", false);
+                }
+            },
+        }
+    }
+
+    fn change_recordings_folder(&mut self) {
+        if matches!(
+            self.state,
+            AppState::Recording { .. } | AppState::Finalizing
+        ) {
+            self.tray
+                .notify("Stop recording before changing folder", false);
+            return;
+        }
+
+        let current = config::recordings_dir();
+        let picked = folder_picker::pick_folder(Some(&current));
+
+        match picked {
+            None => {
+                log::info("Recordings folder change cancelled");
+            }
+            Some(path) => match Settings::set_recordings_dir(path.clone()) {
+                Ok(()) => {
+                    let msg = format!("Recordings will be saved to {}", path.display());
+                    self.tray.notify(&msg, false);
+                    log::info(&msg);
+                }
+                Err(err) => {
+                    log::error(&format!("Failed to save recordings folder: {err}"));
+                    self.tray
+                        .notify("Could not save recordings folder setting", false);
                 }
             },
         }

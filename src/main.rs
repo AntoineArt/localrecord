@@ -7,6 +7,7 @@ mod app;
 mod audio;
 mod clipboard;
 mod config;
+mod folder_picker;
 mod hidden_window;
 mod hotkey;
 mod hotkey_format;

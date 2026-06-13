@@ -17,7 +17,7 @@ Quick recordings without opening a full DAW or OBS. One hotkey toggles capture o
 - **Dual capture** — WASAPI loopback (desktop/apps) + microphone, mixed to one file
 - **Compact Opus output** — default `.opus` format (~30 MB/hour at 64 kbps vs ~660 MB/hour WAV)
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu
-- **System tray** — start/stop, open recordings folder, change shortcut, startup toggle
+- **System tray** — start/stop, open or change recordings folder, change shortcut, startup toggle
 - **Recording indicator** — tray icon shows a red badge while recording
 - **Toast notification on save** — filename and folder shown clearly when a recording finishes
 - **No console window** — runs quietly in the notification area
@@ -56,6 +56,8 @@ Recordings are saved to:
 
 `%LOCALAPPDATA%\localrecord\LocalRecord\recordings\`
 
+Change the folder from the tray menu (**Change recordings folder...**) or set `recordings_dir=` in settings.
+
 Settings are stored in:
 
 `%LOCALAPPDATA%\localrecord\LocalRecord\config\settings.ini`
@@ -66,6 +68,7 @@ Example:
 hotkey=Ctrl+Shift+R
 format=opus
 bitrate=64
+recordings_dir=D:\My Recordings
 ```
 
 Use `format=wav` for uncompressed WAV (paste-as-audio in Audacity). Use `bitrate=32`–`128` for Opus quality (default `64`).
@@ -77,6 +80,7 @@ Use `format=wav` for uncompressed WAV (paste-as-audio in Audacity). Use `bitrate
 | Start recording | Begin capture |
 | Stop recording | Stop, save file, copy to clipboard |
 | Open recordings folder | Open output directory in Explorer |
+| Change recordings folder... | Pick a custom save location |
 | Change shortcut | Pick a new global hotkey |
 | Launch at Windows startup | Toggle auto-start |
 | Exit | Quit the app |

@@ -38,6 +38,7 @@ pub struct Settings {
     pub hotkey: String,
     pub format: OutputFormat,
     pub bitrate_kbps: u32,
+    pub recordings_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -46,6 +47,7 @@ impl Default for Settings {
             hotkey: DEFAULT_HOTKEY.to_string(),
             format: OutputFormat::Opus,
             bitrate_kbps: DEFAULT_BITRATE_KBPS,
+            recordings_dir: None,
         }
     }
 }
@@ -69,13 +71,25 @@ impl Settings {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
+        let recordings_dir = self
+            .recordings_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+
         let content = format!(
-            "hotkey={}\nformat={}\nbitrate={}\n",
+            "hotkey={}\nformat={}\nbitrate={}\nrecordings_dir={recordings_dir}\n",
             self.hotkey,
             self.format.as_str(),
             self.bitrate_kbps
         );
         fs::write(&path, content).map_err(|e| e.to_string())
+    }
+
+    pub fn set_recordings_dir(path: PathBuf) -> Result<(), String> {
+        let mut settings = Self::load();
+        settings.recordings_dir = Some(path);
+        settings.save()
     }
 }
 
@@ -83,6 +97,7 @@ fn parse_settings(content: &str) -> Option<Settings> {
     let mut hotkey = None;
     let mut format = OutputFormat::Opus;
     let mut bitrate_kbps = DEFAULT_BITRATE_KBPS;
+    let mut recordings_dir = None;
 
     for line in content.lines() {
         let line = line.trim();
@@ -100,13 +115,19 @@ fn parse_settings(content: &str) -> Option<Settings> {
             if let Ok(kbps) = value.trim().parse::<u32>() {
                 bitrate_kbps = kbps.clamp(32, 128);
             }
+        } else if let Some(value) = line.strip_prefix("recordings_dir=") {
+            let value = value.trim();
+            if !value.is_empty() {
+                recordings_dir = Some(PathBuf::from(value));
+            }
         }
     }
 
-    hotkey.map(|hotkey| Settings {
-        hotkey,
+    Some(Settings {
+        hotkey: hotkey.unwrap_or_else(|| DEFAULT_HOTKEY.to_string()),
         format,
         bitrate_kbps,
+        recordings_dir,
     })
 }
 
@@ -137,5 +158,15 @@ mod tests {
         let settings = parse_settings("hotkey=Ctrl+R\nformat=wav\nbitrate=96\n").unwrap();
         assert_eq!(settings.format, OutputFormat::Wav);
         assert_eq!(settings.bitrate_kbps, 96);
+    }
+
+    #[test]
+    fn parses_recordings_dir() {
+        let settings =
+            parse_settings("hotkey=Ctrl+R\nrecordings_dir=D:\\Audio\\LocalRecord\n").unwrap();
+        assert_eq!(
+            settings.recordings_dir,
+            Some(PathBuf::from(r"D:\Audio\LocalRecord"))
+        );
     }
 }

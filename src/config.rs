@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use crate::log;
 use crate::settings::Settings;
 
-pub fn recordings_dir() -> PathBuf {
+pub fn default_recordings_dir() -> PathBuf {
     if let Some(dirs) = directories::ProjectDirs::from("com", "localrecord", "LocalRecord") {
         let path = dirs.data_dir().join("recordings");
         std::fs::create_dir_all(&path).ok();
@@ -14,6 +15,21 @@ pub fn recordings_dir() -> PathBuf {
         .join("LocalRecord");
     std::fs::create_dir_all(&fallback).ok();
     fallback
+}
+
+pub fn recordings_dir() -> PathBuf {
+    let settings = Settings::load();
+    if let Some(path) = settings.recordings_dir {
+        if std::fs::create_dir_all(&path).is_ok() {
+            return path;
+        }
+        log::error(&format!(
+            "Configured recordings folder is unavailable: {}",
+            path.display()
+        ));
+    }
+
+    default_recordings_dir()
 }
 
 pub fn recording_filename() -> PathBuf {
