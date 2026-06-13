@@ -82,6 +82,10 @@ impl TrayController {
         self.sync_recording_state(recording)
     }
 
+    pub fn repair_tray_after_stop(&mut self) -> Result<(), String> {
+        self.repair_tray_icon()
+    }
+
     pub fn set_hotkey_label(&mut self, label: &str) -> Result<(), String> {
         self.hotkey_label = label.to_string();
         self.hotkey_item
@@ -89,9 +93,23 @@ impl TrayController {
         self.sync_recording_state(false)
     }
 
-    /// Re-applies icon, menu items, and tooltip after notifications (Shell_NotifyIconW can desync state).
+    /// Re-applies icon, menu items, and tooltip after notifications.
     pub fn refresh_after_notification(&mut self, recording: bool) -> Result<(), String> {
-        self.sync_recording_state(recording)
+        self.sync_recording_state(recording)?;
+        self.repair_tray_icon()
+    }
+
+    /// Re-registers the shell tray icon so right-click menu works again after toasts.
+    fn repair_tray_icon(&mut self) -> Result<(), String> {
+        crate::balloon::invalidate_tray_target();
+        self.tray
+            .set_visible(false)
+            .map_err(|e| format!("Failed to hide tray icon during repair: {e}"))?;
+        self.tray
+            .set_visible(true)
+            .map_err(|e| format!("Failed to restore tray icon during repair: {e}"))?;
+        crate::balloon::focus_tray_for_menu();
+        Ok(())
     }
 
     fn sync_recording_state(&mut self, recording: bool) -> Result<(), String> {

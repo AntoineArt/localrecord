@@ -248,6 +248,7 @@ impl App {
         };
 
         let _ = self.tray.set_recording(false);
+        let _ = self.tray.repair_tray_after_stop();
         let owner = self.clipboard_owner.0 as isize;
         let proxy = self.event_proxy.clone();
 

@@ -6,7 +6,6 @@ use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 
-use crate::balloon;
 use crate::log;
 
 pub const APP_ID: &str = "com.localrecord.LocalRecord";
@@ -45,33 +44,13 @@ pub fn show_recording_saved(path: &Path, clipboard_ok: bool) -> bool {
         return true;
     }
 
-    let balloon_body = if folder.is_empty() {
-        format!("{headline}\n{filename}")
-    } else {
-        format!("{headline}\n{filename}\n{folder}")
-    };
-
-    if balloon::show("LocalRecord", &balloon_body).is_ok() {
-        return true;
-    }
-
-    log::error("All notification methods failed for recording saved");
+    log::error("Toast notification failed for recording saved");
     false
 }
 
 /// Short status notification (errors, settings changes, etc.).
 pub fn show_message(headline: &str, detail: &str) -> bool {
-    if show_toast("LocalRecord", headline, detail, "").is_ok() {
-        return true;
-    }
-
-    let body = if detail.is_empty() {
-        headline.to_string()
-    } else {
-        format!("{headline}\n{detail}")
-    };
-
-    balloon::show("LocalRecord", &body).is_ok()
+    show_toast("LocalRecord", headline, detail, "").is_ok()
 }
 
 fn show_toast(title: &str, headline: &str, detail: &str, subdetail: &str) -> Result<(), String> {
