@@ -12,14 +12,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
     VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetFocus,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-    CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER,
-    SW_SHOWNORMAL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_KEYDOWN,
-    WM_SYSKEYDOWN, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_OVERLAPPED,
-    WS_SYSMENU, WS_VISIBLE, HWND_TOP, SS_LEFT,
+    GetWindowLongPtrW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CREATESTRUCTW,
+    CW_USEDEFAULT, GWLP_USERDATA, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOZORDER, SW_SHOWNORMAL,
+    WINDOW_EX_STYLE, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_SYSKEYDOWN, WNDCLASSW,
+    WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOPMOST, WS_OVERLAPPED, WS_SYSMENU, WS_VISIBLE,
+    HWND_TOP,
 };
 
 use crate::log;
@@ -158,12 +159,12 @@ unsafe extern "system" fn picker_wnd_proc(
                 WINDOW_EX_STYLE::default(),
                 PCWSTR(to_wide("STATIC").as_ptr()),
                 PCWSTR(label.as_ptr()),
-                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_LEFT.0),
+                WS_CHILD | WS_VISIBLE,
                 16,
                 16,
                 WINDOW_WIDTH - 32,
                 WINDOW_HEIGHT - 48,
-                Some(hwnd),
+                hwnd,
                 None,
                 GetModuleHandleW(None).unwrap(),
                 None,
