@@ -53,6 +53,11 @@ impl Mixer {
     fn trim_drift(&mut self) {
         let loop_len = self.loopback.len();
         let mic_len = self.mic.len();
+        // When one stream is idle (paused video, silent call remote, etc.) do not
+        // trim the active stream or its samples get discarded.
+        if loop_len == 0 || mic_len == 0 {
+            return;
+        }
         if loop_len > mic_len + MAX_DRIFT_SAMPLES {
             let excess = loop_len - mic_len - MAX_DRIFT_SAMPLES;
             for _ in 0..excess {
@@ -67,17 +72,30 @@ impl Mixer {
     }
 
     /// Mix one stereo frame (L/R pair) from each stream.
+    ///
+    /// Outputs whenever either stream has a full stereo frame, using silence for
+    /// the other side. Requiring both streams blocked mic-only recording when
+    /// loopback capture was idle (paused media, silent system audio).
     fn drain_mixed(&mut self) {
-        while self.loopback.len() >= 2 && self.mic.len() >= 2 {
-            let ll = self.loopback.pop_front().unwrap_or(0.0);
-            let lr = self.loopback.pop_front().unwrap_or(0.0);
-            let ml = self.mic.pop_front().unwrap_or(0.0);
-            let mr = self.mic.pop_front().unwrap_or(0.0);
+        while self.loopback.len() >= 2 || self.mic.len() >= 2 {
+            let (ll, lr) = pop_stereo_or_zero(&mut self.loopback);
+            let (ml, mr) = pop_stereo_or_zero(&mut self.mic);
             self.output
                 .push((ll * self.loopback_gain + ml * self.mic_gain).clamp(-1.0, 1.0));
             self.output
                 .push((lr * self.loopback_gain + mr * self.mic_gain).clamp(-1.0, 1.0));
         }
+    }
+}
+
+fn pop_stereo_or_zero(queue: &mut VecDeque<f32>) -> (f32, f32) {
+    if queue.len() >= 2 {
+        (
+            queue.pop_front().unwrap_or(0.0),
+            queue.pop_front().unwrap_or(0.0),
+        )
+    } else {
+        (0.0, 0.0)
     }
 }
 
@@ -109,5 +127,40 @@ mod tests {
 
         let out = mixer.finish();
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn outputs_mic_when_loopback_idle() {
+        let mut mixer = Mixer::new(1.0, 1.0);
+        mixer.push_mic(&[0.5, 0.25]);
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), 2);
+        assert!((out[0] - 0.5).abs() < f32::EPSILON);
+        assert!((out[1] - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn outputs_loopback_when_mic_idle() {
+        let mut mixer = Mixer::new(1.0, 1.0);
+        mixer.push_loopback(&[0.8, 0.2]);
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), 2);
+        assert!((out[0] - 0.8).abs() < f32::EPSILON);
+        assert!((out[1] - 0.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn does_not_trim_mic_when_loopback_empty() {
+        let mut mixer = Mixer::new(1.0, 1.0);
+        let excess = MAX_DRIFT_SAMPLES + 4;
+        let mic_only = vec![0.5, 0.5];
+        for _ in 0..(excess / 2) {
+            mixer.push_mic(&mic_only);
+        }
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), excess);
     }
 }
