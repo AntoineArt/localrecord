@@ -1,6 +1,6 @@
 [package]
 name = "localrecord"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "Lightweight Windows tray app to record mic + desktop audio (OBS-style WASAPI capture)"
 license = "MIT"

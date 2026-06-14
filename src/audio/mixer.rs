@@ -12,6 +12,13 @@ pub struct Mixer {
 /// ~100 ms of stereo samples at 48 kHz (4800 frames × 2 channels).
 const MAX_DRIFT_SAMPLES: usize = 4800 * 2;
 
+/// One 10 ms WASAPI chunk at 48 kHz stereo (480 frames × 2 channels).
+const CAPTURE_CHUNK_SAMPLES: usize = 480 * 2;
+
+/// Wait for ~2 capture chunks before writing loopback without mic, so a mic
+/// chunk for the same window is mixed instead of duplicated on a later pass.
+const LOOPBACK_SOLO_WAIT_SAMPLES: usize = CAPTURE_CHUNK_SAMPLES * 2;
+
 impl Mixer {
     pub fn new(loopback_gain: f32, mic_gain: f32) -> Self {
         Self {
@@ -25,14 +32,17 @@ impl Mixer {
 
     pub fn push_loopback(&mut self, samples: &[f32]) {
         self.loopback.extend(samples);
-        self.trim_drift();
-        self.drain_mixed();
     }
 
     pub fn push_mic(&mut self, samples: &[f32]) {
         self.mic.extend(samples);
+    }
+
+    /// Trim drift and emit mixed output. Call after ingesting all pending chunks
+    /// from both capture threads so they stay time-aligned.
+    pub fn process(&mut self, flush: bool) {
         self.trim_drift();
-        self.drain_mixed();
+        self.drain_mixed(flush);
     }
 
     pub fn take_output_chunk(&mut self, max_samples: usize) -> Vec<f32> {
@@ -41,12 +51,12 @@ impl Mixer {
     }
 
     pub fn drain_remaining(&mut self) -> Vec<f32> {
-        self.drain_mixed();
+        self.process(true);
         std::mem::take(&mut self.output)
     }
 
     pub fn finish(mut self) -> Vec<f32> {
-        self.drain_mixed();
+        self.process(true);
         self.output
     }
 
@@ -73,30 +83,54 @@ impl Mixer {
 
     /// Mix one stereo frame (L/R pair) from each stream.
     ///
-    /// Outputs whenever either stream has a full stereo frame, using silence for
-    /// the other side. Requiring both streams blocked mic-only recording when
-    /// loopback capture was idle (paused media, silent system audio).
-    fn drain_mixed(&mut self) {
-        while self.loopback.len() >= 2 || self.mic.len() >= 2 {
-            let (ll, lr) = pop_stereo_or_zero(&mut self.loopback);
-            let (ml, mr) = pop_stereo_or_zero(&mut self.mic);
-            self.output
-                .push((ll * self.loopback_gain + ml * self.mic_gain).clamp(-1.0, 1.0));
-            self.output
-                .push((lr * self.loopback_gain + mr * self.mic_gain).clamp(-1.0, 1.0));
+    /// Keeps loopback and mic on a single timeline by pairing frames whenever
+    /// both queues have data. Unpaired output is only used when one stream is
+    /// genuinely idle (empty queue), never because the other chunk is simply late.
+    fn drain_mixed(&mut self, flush: bool) {
+        while self.loopback.len() >= 2 && self.mic.len() >= 2 {
+            self.push_mixed_frame(true, true);
         }
+
+        while self.loopback.is_empty() && self.mic.len() >= 2 {
+            self.push_mixed_frame(false, true);
+        }
+
+        let loopback_solo_threshold = if flush {
+            2
+        } else {
+            LOOPBACK_SOLO_WAIT_SAMPLES
+        };
+        while self.mic.is_empty() && self.loopback.len() >= loopback_solo_threshold {
+            if self.loopback.len() < 2 {
+                break;
+            }
+            self.push_mixed_frame(true, false);
+        }
+    }
+
+    fn push_mixed_frame(&mut self, use_loopback: bool, use_mic: bool) {
+        let (ll, lr) = if use_loopback {
+            pop_stereo(&mut self.loopback)
+        } else {
+            (0.0, 0.0)
+        };
+        let (ml, mr) = if use_mic {
+            pop_stereo(&mut self.mic)
+        } else {
+            (0.0, 0.0)
+        };
+        self.output
+            .push((ll * self.loopback_gain + ml * self.mic_gain).clamp(-1.0, 1.0));
+        self.output
+            .push((lr * self.loopback_gain + mr * self.mic_gain).clamp(-1.0, 1.0));
     }
 }
 
-fn pop_stereo_or_zero(queue: &mut VecDeque<f32>) -> (f32, f32) {
-    if queue.len() >= 2 {
-        (
-            queue.pop_front().unwrap_or(0.0),
-            queue.pop_front().unwrap_or(0.0),
-        )
-    } else {
-        (0.0, 0.0)
-    }
+fn pop_stereo(queue: &mut VecDeque<f32>) -> (f32, f32) {
+    (
+        queue.pop_front().unwrap_or(0.0),
+        queue.pop_front().unwrap_or(0.0),
+    )
 }
 
 #[cfg(test)]
@@ -159,8 +193,36 @@ mod tests {
         for _ in 0..(excess / 2) {
             mixer.push_mic(&mic_only);
         }
+        mixer.process(false);
 
         let out = mixer.finish();
         assert_eq!(out.len(), excess);
+    }
+
+    #[test]
+    fn does_not_double_output_when_chunks_arrive_separately() {
+        let chunk: Vec<f32> = (0..CAPTURE_CHUNK_SAMPLES).map(|i| i as f32 * 0.001).collect();
+        let mut mixer = Mixer::new(1.0, 1.0);
+        mixer.push_loopback(&chunk);
+        mixer.process(false);
+        assert!(mixer.take_output_chunk(CAPTURE_CHUNK_SAMPLES).is_empty());
+        mixer.push_mic(&vec![0.0; CAPTURE_CHUNK_SAMPLES]);
+        mixer.process(false);
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), CAPTURE_CHUNK_SAMPLES);
+    }
+
+    #[test]
+    fn aligns_both_streams_in_one_process_pass() {
+        let chunk: Vec<f32> = vec![0.25; CAPTURE_CHUNK_SAMPLES];
+        let mut mixer = Mixer::new(1.0, 1.0);
+        mixer.push_loopback(&chunk);
+        mixer.push_mic(&vec![0.5; CAPTURE_CHUNK_SAMPLES]);
+        mixer.process(false);
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), CAPTURE_CHUNK_SAMPLES);
+        assert!((out[0] - 0.625).abs() < f32::EPSILON);
     }
 }

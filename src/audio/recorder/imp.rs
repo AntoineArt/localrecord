@@ -154,11 +154,17 @@ fn pump_mixer_inputs(
     loopback_rx: &Receiver<Vec<f32>>,
     mic_rx: &Receiver<Vec<f32>>,
 ) {
+    let mut got_any = false;
     while let Ok(chunk) = loopback_rx.try_recv() {
         mixer.push_loopback(&chunk);
+        got_any = true;
     }
     while let Ok(chunk) = mic_rx.try_recv() {
         mixer.push_mic(&chunk);
+        got_any = true;
+    }
+    if got_any {
+        mixer.process(false);
     }
 }
 
