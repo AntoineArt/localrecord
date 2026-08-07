@@ -158,6 +158,34 @@ ffmpeg -i recording.opus -af volumedetect -f null -
 
 A healthy recording peaks somewhere around −6 to −3 dBFS. A peak near −40 dBFS means a source is roughly 100× too quiet — worth fixing at the source (device gain, Windows input level, system volume) rather than leaving to the AGC.
 
+## Shortcut on Wayland
+
+The global shortcut is grabbed through X11. On a **native Wayland session**
+(Hyprland, Sway, GNOME Wayland…) nothing reaches that grab, so the shortcut
+never fires — and the Linux tray backend has no click action either, leaving
+only the right-click menu.
+
+LocalRecord listens for **SIGUSR1** on Linux and toggles recording when it
+arrives, so your compositor can bind a key to it directly:
+
+```bash
+pkill -USR1 -x localrecord
+```
+
+Hyprland, in `~/.config/hypr/bindings.conf`:
+
+```
+bindd = CTRL SHIFT, R, Audio recording, exec, pkill -USR1 -x localrecord
+```
+
+Sway, in `~/.config/sway/config`:
+
+```
+bindsym Ctrl+Shift+r exec pkill -USR1 -x localrecord
+```
+
+This works on X11 too, so it is a reasonable binding to keep either way.
+
 ## Tray menu
 
 | Item | Action |
@@ -237,6 +265,8 @@ Same core approach as OBS on Windows:
 - Apps in exclusive audio mode may be missing from loopback
 - Large WAV recordings can be slow to copy to the clipboard (Opus copies the file path only; use `format=wav` if you need paste-as-audio)
 - Not all apps accept audio from the clipboard
+- On Wayland the built-in global shortcut cannot fire (X11 grab) — bind `pkill -USR1 -x localrecord` instead, see [Shortcut on Wayland](#shortcut-on-wayland)
+- Left-clicking the Linux tray icon does nothing; the backend exposes a menu only, so use right-click
 - Auto-levelling raises a quiet source's noise floor along with its signal, and cannot recover a source that never reaches the −55 dBFS gate
 
 ## Contributing

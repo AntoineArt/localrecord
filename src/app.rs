@@ -63,6 +63,15 @@ impl App {
         }
     }
 
+    /// Toggle on SIGUSR1, which is how a Wayland compositor reaches us — the
+    /// X11 key grab behind `poll_hotkey` never fires there. See [`crate::signals`].
+    #[cfg(target_os = "linux")]
+    pub fn poll_signal_toggle(&mut self) {
+        if crate::signals::take_toggle_request() {
+            self.toggle_recording();
+        }
+    }
+
     pub fn handle_menu_event(&mut self, event: &tray_icon::menu::MenuEvent) {
         if let Some(action) = self.tray.handle_menu_event(event) {
             self.handle_tray_action(action);

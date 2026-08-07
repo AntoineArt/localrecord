@@ -18,6 +18,8 @@ mod hotkey_picker_linux;
 mod icon;
 mod log;
 mod notification;
+#[cfg(target_os = "linux")]
+mod signals;
 mod settings;
 mod startup;
 mod tray;
@@ -74,7 +76,10 @@ fn run() {
             event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
 
             #[cfg(target_os = "linux")]
-            pump_gtk_events();
+            {
+                pump_gtk_events();
+                self.app.poll_signal_toggle();
+            }
             self.app.poll_hotkey();
         }
     }
@@ -84,7 +89,10 @@ fn run() {
     }
 
     #[cfg(target_os = "linux")]
-    init_linux_gtk();
+    {
+        init_linux_gtk();
+        signals::install();
+    }
 
     clipboard::init_clipboard();
     notification::init();
