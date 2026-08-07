@@ -186,6 +186,10 @@ bindsym Ctrl+Shift+r exec pkill -USR1 -x localrecord
 
 This works on X11 too, so it is a reasonable binding to keep either way.
 
+The tray's **Change shortcut** entry is greyed out on Wayland and reads
+*"Change shortcut (unavailable on Wayland)"*, since anything set there would be
+registered and never fire. Change the compositor binding above instead.
+
 ## Tray menu
 
 | Item | Action |
@@ -194,7 +198,7 @@ This works on X11 too, so it is a reasonable binding to keep either way.
 | Stop recording | Stop, save file, copy to clipboard |
 | Open recordings folder | Open output directory in Explorer |
 | Change recordings folder... | Pick a custom save location |
-| Change shortcut | Pick a new global hotkey |
+| Change shortcut | Pick a new global hotkey — disabled on Wayland, see above |
 | Auto-level mic and desktop audio | Toggle AGC — applies to the next recording |
 | Launch at startup | Toggle auto-start (Windows registry or XDG autostart on Linux) |
 | Exit | Quit the app |

@@ -2,6 +2,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::config;
+use crate::hotkey;
 use crate::icon;
 use crate::log;
 use crate::notification;
@@ -27,6 +28,7 @@ pub struct TrayController {
     agc_item: CheckMenuItem,
     hotkey_item: MenuItem,
     hotkey_label: String,
+    shortcut_supported: bool,
 }
 
 impl TrayController {
@@ -36,10 +38,14 @@ impl TrayController {
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
         let change_folder_item =
             MenuItem::with_id(MENU_CHANGE_FOLDER, "Change recordings folder...", true, None);
+        // A Wayland session cannot deliver the X11-grabbed shortcut, so the
+        // picker would happily save a binding that never fires. Grey it out
+        // rather than offer a setting with no effect.
+        let shortcut_supported = hotkey::global_shortcut_supported();
         let hotkey_item = MenuItem::with_id(
             MENU_HOTKEY,
-            format!("Change shortcut ({hotkey_label})"),
-            true,
+            hotkey_menu_label(hotkey_label, shortcut_supported),
+            shortcut_supported,
             None,
         );
         let startup_item = CheckMenuItem::with_id(
@@ -87,6 +93,7 @@ impl TrayController {
             agc_item,
             hotkey_item,
             hotkey_label: hotkey_label.to_string(),
+            shortcut_supported,
         })
     }
 
@@ -101,7 +108,7 @@ impl TrayController {
     pub fn set_hotkey_label(&mut self, label: &str) -> Result<(), String> {
         self.hotkey_label = label.to_string();
         self.hotkey_item
-            .set_text(format!("Change shortcut ({label})"));
+            .set_text(hotkey_menu_label(label, self.shortcut_supported));
         self.sync_recording_state(false)
     }
 
@@ -193,6 +200,14 @@ impl TrayController {
 
     pub fn set_agc_checked(&mut self, enabled: bool) {
         let _ = self.agc_item.set_checked(enabled);
+    }
+}
+
+fn hotkey_menu_label(label: &str, supported: bool) -> String {
+    if supported {
+        format!("Change shortcut ({label})")
+    } else {
+        "Change shortcut (unavailable on Wayland)".to_string()
     }
 }
 

@@ -120,6 +120,9 @@ fn run() {
 
     let app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
     log::info("LocalRecord started");
+    if !hotkey::global_shortcut_supported() {
+        log::info(hotkey::WAYLAND_SHORTCUT_HINT);
+    }
 
     let mut handler = LocalRecordApp { app };
     let _ = event_loop.run_app(&mut handler);

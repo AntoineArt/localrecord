@@ -117,6 +117,13 @@ impl App {
     }
 
     fn change_hotkey(&mut self) {
+        // The menu item is disabled where this cannot work, but the action is
+        // still reachable, so refuse rather than save a binding that never fires.
+        if !hotkey::global_shortcut_supported() {
+            self.tray.notify(hotkey::WAYLAND_SHORTCUT_HINT, false);
+            return;
+        }
+
         if matches!(
             self.state,
             AppState::Recording { .. } | AppState::Finalizing
