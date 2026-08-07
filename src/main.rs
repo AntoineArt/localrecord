@@ -28,10 +28,15 @@ fn main() {
 
 fn run() {
     use app::{App, UserEvent};
+    use std::time::{Duration, Instant};
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
-    use winit::event_loop::ActiveEventLoop;
+    use winit::event_loop::{ActiveEventLoop, ControlFlow};
     use winit::window::WindowId;
+
+    /// How often the event loop wakes to pump GTK and poll the hotkey. Short
+    /// enough that the shortcut feels instant, long enough to stay idle-cheap.
+    const TICK: Duration = Duration::from_millis(30);
 
     struct LocalRecordApp {
         app: App,
@@ -59,7 +64,15 @@ fn run() {
             }
         }
 
-        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            // A tray-only app receives almost no winit events, so the default
+            // `ControlFlow::Wait` would park here indefinitely. That starves the
+            // two things this callback drives: the GTK main loop, without which
+            // libappindicator never finishes registering with the StatusNotifier
+            // watcher (no tray icon at all on Linux), and the hotkey poll, which
+            // is what makes the global shortcut fire. Tick instead.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
+
             #[cfg(target_os = "linux")]
             pump_gtk_events();
             self.app.poll_hotkey();
