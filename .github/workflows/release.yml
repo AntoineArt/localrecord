@@ -19,8 +19,29 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Upload to GitHub Release
+      - name: Upload Windows binary
         uses: softprops/action-gh-release@v2
         with:
           files: target/release/localrecord.exe
+          generate_release_notes: true
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse-dev libopus-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload Linux binary
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/localrecord
           generate_release_notes: true

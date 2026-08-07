@@ -83,7 +83,7 @@ pub fn pick_hotkey_interactive(current: &str) -> Option<String> {
     crate::hotkey_picker::pick_hotkey(current)
 }
 
-#[cfg(not(windows))]
-pub fn pick_hotkey_interactive(_current: &str) -> Option<String> {
-    None
+#[cfg(target_os = "linux")]
+pub fn pick_hotkey_interactive(current: &str) -> Option<String> {
+    crate::hotkey_picker_linux::pick_hotkey(current)
 }

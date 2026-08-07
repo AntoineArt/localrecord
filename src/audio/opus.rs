@@ -28,6 +28,7 @@ pub fn mix_streams_opus(
     mic_rx: Receiver<Vec<f32>>,
     output_path: &PathBuf,
     bitrate_kbps: u32,
+    agc: bool,
 ) -> Result<u64, String> {
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -63,7 +64,7 @@ pub fn mix_streams_opus(
     )
     .map_err(|e| e.to_string())?;
 
-    let mut mixer = Mixer::new(1.0, 0.85);
+    let mut mixer = Mixer::new(1.0, 0.85).with_agc(agc);
     let mut state = OpusEncodeState::new();
 
     while !stop.load(Ordering::SeqCst) {

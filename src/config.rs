@@ -3,6 +3,13 @@ use std::path::PathBuf;
 use crate::log;
 use crate::settings::Settings;
 
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+}
+
 pub fn default_recordings_dir() -> PathBuf {
     if let Some(dirs) = directories::ProjectDirs::from("com", "localrecord", "LocalRecord") {
         let path = dirs.data_dir().join("recordings");
@@ -10,9 +17,7 @@ pub fn default_recordings_dir() -> PathBuf {
         return path;
     }
 
-    let fallback = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join("Documents")
-        .join("LocalRecord");
+    let fallback = home_dir().join("Documents").join("LocalRecord");
     std::fs::create_dir_all(&fallback).ok();
     fallback
 }
@@ -49,7 +54,7 @@ pub fn log_file() -> PathBuf {
     if let Some(dirs) = directories::ProjectDirs::from("com", "localrecord", "LocalRecord") {
         return dirs.data_dir().join("localrecord.log");
     }
-    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
+    home_dir()
         .join("Documents")
         .join("LocalRecord")
         .join("localrecord.log")

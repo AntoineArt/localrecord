@@ -11,10 +11,9 @@ fn main() {
     let mut res = winres::WindowsResource::new();
     res.set_icon("assets/icon.ico");
     res.set("ProductName", "LocalRecord");
-    res.set(
-        "FileDescription",
-        "Record microphone and desktop audio to WAV",
-    );
+    // Shown as the session name in the Windows volume mixer, so keep it short
+    // and recognizable rather than a full description of the app.
+    res.set("FileDescription", "LocalRecord");
     res.set("CompanyName", "LocalRecord");
     res.set("LegalCopyright", "Copyright (C) LocalRecord");
     res.set("OriginalFilename", "localrecord.exe");

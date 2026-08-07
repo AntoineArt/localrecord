@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use super::agc::Agc;
+
 /// Stereo interleaved f32: [L, R, L, R, ...]
 pub struct Mixer {
     loopback: VecDeque<f32>,
@@ -7,6 +9,10 @@ pub struct Mixer {
     output: Vec<f32>,
     loopback_gain: f32,
     mic_gain: f32,
+    /// One AGC per source, so the two are levelled independently before they
+    /// are summed. `None` when the `agc` setting is off.
+    loopback_agc: Option<Agc>,
+    mic_agc: Option<Agc>,
 }
 
 /// ~100 ms of stereo samples at 48 kHz (4800 frames × 2 channels).
@@ -27,15 +33,28 @@ impl Mixer {
             output: Vec::new(),
             loopback_gain,
             mic_gain,
+            loopback_agc: None,
+            mic_agc: None,
         }
     }
 
+    /// Enable per-source automatic gain control, which levels the loopback and
+    /// microphone streams towards a common target before mixing. See
+    /// [`crate::audio::agc`] for what that costs.
+    pub fn with_agc(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.loopback_agc = Some(Agc::new());
+            self.mic_agc = Some(Agc::new());
+        }
+        self
+    }
+
     pub fn push_loopback(&mut self, samples: &[f32]) {
-        self.loopback.extend(samples);
+        push_leveled(&mut self.loopback, &mut self.loopback_agc, samples);
     }
 
     pub fn push_mic(&mut self, samples: &[f32]) {
-        self.mic.extend(samples);
+        push_leveled(&mut self.mic, &mut self.mic_agc, samples);
     }
 
     /// Trim drift and emit mixed output. Call after ingesting all pending chunks
@@ -120,10 +139,45 @@ impl Mixer {
             (0.0, 0.0)
         };
         self.output
-            .push((ll * self.loopback_gain + ml * self.mic_gain).clamp(-1.0, 1.0));
+            .push(soft_clip(ll * self.loopback_gain + ml * self.mic_gain));
         self.output
-            .push((lr * self.loopback_gain + mr * self.mic_gain).clamp(-1.0, 1.0));
+            .push(soft_clip(lr * self.loopback_gain + mr * self.mic_gain));
     }
+}
+
+/// Level a chunk through `agc` (when enabled) on its way into `queue`.
+fn push_leveled(queue: &mut VecDeque<f32>, agc: &mut Option<Agc>, samples: &[f32]) {
+    match agc {
+        Some(agc) => {
+            let mut leveled = samples.to_vec();
+            agc.process(&mut leveled);
+            queue.extend(leveled);
+        }
+        None => queue.extend(samples),
+    }
+}
+
+/// Threshold above which the mix bus starts saturating, ~-1 dBFS.
+const LIMIT_THRESHOLD: f32 = 0.891;
+
+/// Soft saturation of the summed mix.
+///
+/// Summing two AGC-levelled sources overshoots full scale more often than
+/// summing two raw ones, and a hard `clamp` turns every overshoot into audible
+/// distortion. Everything below the threshold passes untouched; above it the
+/// curve bends asymptotically towards 1.0, so the output never clips outright.
+///
+/// This is a memoryless saturator, not a look-ahead limiter: it colours loud
+/// peaks rather than transparently ducking ahead of them. That is the right
+/// trade here, since it adds no latency and no state to the mix path.
+fn soft_clip(sample: f32) -> f32 {
+    let magnitude = sample.abs();
+    if magnitude <= LIMIT_THRESHOLD {
+        return sample;
+    }
+    let over = (magnitude - LIMIT_THRESHOLD) / (1.0 - LIMIT_THRESHOLD);
+    let shaped = LIMIT_THRESHOLD + (1.0 - LIMIT_THRESHOLD) * over.tanh();
+    shaped.copysign(sample)
 }
 
 fn pop_stereo(queue: &mut VecDeque<f32>) -> (f32, f32) {
@@ -140,15 +194,61 @@ mod tests {
     #[test]
     fn mixes_stereo_frame_pairs_not_individual_samples() {
         let mut mixer = Mixer::new(1.0, 1.0);
-        // Loopback stereo: L=1, R=0
-        mixer.push_loopback(&[1.0, 0.0]);
-        // Mic stereo: L=0, R=1
-        mixer.push_mic(&[0.0, 1.0]);
+        // Loopback stereo: L=0.5, R=0
+        mixer.push_loopback(&[0.5, 0.0]);
+        // Mic stereo: L=0, R=0.25
+        mixer.push_mic(&[0.0, 0.25]);
 
         let out = mixer.finish();
         assert_eq!(out.len(), 2, "one stereo frame = two samples");
-        assert!((out[0] - 1.0).abs() < f32::EPSILON);
-        assert!((out[1] - 1.0).abs() < f32::EPSILON);
+        // Distinct values, both below the saturation threshold, so a swapped
+        // pairing would be visible rather than hidden by the limiter.
+        assert!((out[0] - 0.5).abs() < f32::EPSILON);
+        assert!((out[1] - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn soft_clip_passes_normal_levels_untouched() {
+        for sample in [0.0, 0.25, -0.5, 0.891, -0.891] {
+            assert_eq!(soft_clip(sample), sample);
+        }
+    }
+
+    #[test]
+    fn soft_clip_keeps_overshoots_inside_full_scale() {
+        for sample in [1.0_f32, -1.0, 4.0, -12.5] {
+            let clipped = soft_clip(sample);
+            assert!(
+                clipped.abs() <= 1.0,
+                "{sample} -> {clipped} overshoots full scale"
+            );
+            assert!(clipped.abs() < sample.abs(), "{sample} was not reduced");
+            assert_eq!(clipped.signum(), sample.signum());
+        }
+    }
+
+    #[test]
+    fn agc_levels_a_quiet_source_before_mixing() {
+        let quiet = vec![0.004_f32; CAPTURE_CHUNK_SAMPLES]; // ~-48 dBFS
+        let mut raw = Mixer::new(1.0, 1.0);
+        let mut leveled = Mixer::new(1.0, 1.0).with_agc(true);
+
+        for _ in 0..200 {
+            raw.push_mic(&quiet);
+            leveled.push_mic(&quiet);
+        }
+
+        let raw_out = raw.finish();
+        let leveled_out = leveled.finish();
+        assert_eq!(raw_out.len(), leveled_out.len());
+
+        let tail = leveled_out.len() - CAPTURE_CHUNK_SAMPLES;
+        assert!(
+            leveled_out[tail].abs() > raw_out[tail].abs() * 10.0,
+            "AGC did not lift the quiet source ({} vs {})",
+            leveled_out[tail],
+            raw_out[tail]
+        );
     }
 
     #[test]

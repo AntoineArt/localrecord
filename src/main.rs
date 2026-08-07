@@ -11,7 +11,10 @@ mod folder_picker;
 mod hidden_window;
 mod hotkey;
 mod hotkey_format;
+#[cfg(windows)]
 mod hotkey_picker;
+#[cfg(target_os = "linux")]
+mod hotkey_picker_linux;
 mod icon;
 mod log;
 mod notification;
@@ -20,18 +23,9 @@ mod startup;
 mod tray;
 
 fn main() {
-    #[cfg(not(windows))]
-    {
-        eprintln!("LocalRecord is a Windows application.");
-        eprintln!("Build with: cargo build --release --target x86_64-pc-windows-gnu");
-        std::process::exit(1);
-    }
-
-    #[cfg(windows)]
     run();
 }
 
-#[cfg(windows)]
 fn run() {
     use app::{App, UserEvent};
     use winit::application::ApplicationHandler;
@@ -66,6 +60,8 @@ fn run() {
         }
 
         fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+            #[cfg(target_os = "linux")]
+            pump_gtk_events();
             self.app.poll_hotkey();
         }
     }
@@ -73,6 +69,9 @@ fn run() {
     if !acquire_single_instance() {
         std::process::exit(0);
     }
+
+    #[cfg(target_os = "linux")]
+    init_linux_gtk();
 
     clipboard::init_clipboard();
     notification::init();
@@ -132,5 +131,75 @@ fn acquire_single_instance() -> bool {
             }
             Err(_) => false,
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn acquire_single_instance() -> bool {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::Mutex;
+
+    static LOCK_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
+
+    let path = single_instance_lock_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let file = match OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(_) => return true,
+    };
+
+    if !try_lock_file(&file) {
+        return false;
+    }
+
+    if let Ok(mut guard) = LOCK_FILE.lock() {
+        *guard = Some(file);
+    }
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn single_instance_lock_path() -> std::path::PathBuf {
+    if let Some(dirs) = directories::ProjectDirs::from("com", "localrecord", "LocalRecord") {
+        return dirs.cache_dir().join("localrecord.lock");
+    }
+    std::env::temp_dir().join("localrecord.lock")
+}
+
+#[cfg(target_os = "linux")]
+fn try_lock_file(file: &std::fs::File) -> bool {
+    use std::os::unix::io::AsRawFd;
+
+    let fd = file.as_raw_fd();
+    unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn acquire_single_instance() -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn init_linux_gtk() {
+    if gtk::init().is_err() {
+        eprintln!("Failed to initialize GTK");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pump_gtk_events() {
+    while gtk::events_pending() {
+        gtk::main_iteration();
     }
 }

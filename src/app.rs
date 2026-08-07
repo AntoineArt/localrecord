@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::thread;
 
-use windows::Win32::Foundation::HWND;
 use winit::event_loop::EventLoopProxy;
 
 use crate::audio::Recorder;
@@ -36,13 +35,13 @@ pub struct App {
     tray: TrayController,
     hotkeys: HotkeyManager,
     state: AppState,
-    clipboard_owner: HWND,
+    clipboard_owner: crate::hidden_window::ClipboardOwner,
     event_proxy: EventLoopProxy<UserEvent>,
 }
 
 impl App {
     pub fn new(
-        clipboard_owner: HWND,
+        clipboard_owner: crate::hidden_window::ClipboardOwner,
         event_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, String> {
         startup::ensure_enabled();
@@ -101,6 +100,7 @@ impl App {
             TrayAction::Stop => self.stop_recording(),
             TrayAction::Toggle => self.toggle_recording(),
             TrayAction::ToggleStartup => self.toggle_startup(),
+            TrayAction::ToggleAgc => self.toggle_agc(),
             TrayAction::ChangeHotkey => self.change_hotkey(),
             TrayAction::ChangeRecordingsFolder => self.change_recordings_folder(),
             TrayAction::Exit => std::process::exit(0),
@@ -201,7 +201,7 @@ impl App {
                 let enabled = startup::is_enabled();
                 self.tray.set_startup_checked(enabled);
                 let msg = if enabled {
-                    "LocalRecord will start with Windows"
+                    startup_enabled_message()
                 } else {
                     "LocalRecord startup disabled"
                 };
@@ -211,6 +211,36 @@ impl App {
             Err(err) => {
                 log::error(&format!("Startup toggle failed: {err}"));
                 self.tray.notify("Could not update startup setting", false);
+            }
+        }
+    }
+
+    /// The mixer reads this setting once when a recording starts, so a change
+    /// made mid-recording only takes effect on the next one.
+    fn toggle_agc(&mut self) {
+        match Settings::toggle_agc() {
+            Ok(enabled) => {
+                self.tray.set_agc_checked(enabled);
+                let msg = if enabled {
+                    "Auto-levelling enabled"
+                } else {
+                    "Auto-levelling disabled"
+                };
+                let msg = if matches!(
+                    self.state,
+                    AppState::Recording { .. } | AppState::Finalizing
+                ) {
+                    format!("{msg} (applies to the next recording)")
+                } else {
+                    msg.to_string()
+                };
+                self.tray.notify(&msg, false);
+                log::info(&msg);
+            }
+            Err(err) => {
+                log::error(&format!("Auto-levelling toggle failed: {err}"));
+                self.tray
+                    .notify("Could not update auto-levelling setting", false);
             }
         }
     }
@@ -249,7 +279,7 @@ impl App {
 
         let _ = self.tray.set_recording(false);
         let _ = self.tray.repair_tray_after_stop();
-        let owner = self.clipboard_owner.0 as isize;
+        let owner = self.clipboard_owner;
         let proxy = self.event_proxy.clone();
 
         thread::spawn(move || {
@@ -259,7 +289,10 @@ impl App {
     }
 }
 
-fn finalize_recording(recorder: Recorder, clipboard_owner: isize) -> RecordingFinishedOutcome {
+fn finalize_recording(
+    recorder: Recorder,
+    clipboard_owner: crate::hidden_window::ClipboardOwner,
+) -> RecordingFinishedOutcome {
     let result = match recorder.stop() {
         Ok(result) => result,
         Err(err) => {
@@ -294,12 +327,24 @@ fn finalize_recording(recorder: Recorder, clipboard_owner: isize) -> RecordingFi
         None
     };
 
-    let clipboard_ok = clipboard::copy_recording_to_clipboard(
-        wav_bytes.as_deref(),
-        &path,
-        HWND(clipboard_owner as *mut _),
-    )
-    .is_ok();
+    let clipboard_ok =
+        clipboard::copy_recording_to_clipboard(wav_bytes.as_deref(), &path, clipboard_owner)
+            .is_ok();
 
     RecordingFinishedOutcome::Saved { path, clipboard_ok }
+}
+
+#[cfg(windows)]
+fn startup_enabled_message() -> &'static str {
+    "LocalRecord will start with Windows"
+}
+
+#[cfg(target_os = "linux")]
+fn startup_enabled_message() -> &'static str {
+    "LocalRecord will start with your session"
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn startup_enabled_message() -> &'static str {
+    "LocalRecord will start automatically"
 }
