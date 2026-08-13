@@ -83,7 +83,29 @@ pub fn pick_hotkey_interactive(current: &str) -> Option<String> {
     crate::hotkey_picker::pick_hotkey(current)
 }
 
-#[cfg(not(windows))]
-pub fn pick_hotkey_interactive(_current: &str) -> Option<String> {
-    None
+#[cfg(target_os = "linux")]
+pub fn pick_hotkey_interactive(current: &str) -> Option<String> {
+    crate::hotkey_picker_linux::pick_hotkey(current)
 }
+
+/// Whether the global shortcut can actually reach us.
+///
+/// `global-hotkey` grabs keys through X11. A native Wayland session never
+/// routes anything to that grab, so the shortcut is registered and silently
+/// never fires. Callers use this to avoid offering a setting that cannot work —
+/// see [`crate::signals`] for what to bind instead.
+#[cfg(target_os = "linux")]
+pub fn global_shortcut_supported() -> bool {
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
+    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+    wayland_display.is_empty() && !session_type.eq_ignore_ascii_case("wayland")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn global_shortcut_supported() -> bool {
+    true
+}
+
+/// What to tell the user instead, when the shortcut cannot work.
+pub const WAYLAND_SHORTCUT_HINT: &str =
+    "Global shortcut unavailable on Wayland — bind `pkill -USR1 -x localrecord` in your compositor";

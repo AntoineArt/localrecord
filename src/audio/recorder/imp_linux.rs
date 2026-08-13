@@ -1,13 +1,12 @@
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use wasapi::*;
-
-use crate::config;
+use libpulse_binding as pulse;
+use libpulse_simple_binding as psimple;
+use pulse::sample::{Format, Spec};
 
 use super::mix_output;
 
@@ -25,11 +24,14 @@ pub struct Recorder {
     started_at: Option<std::time::Instant>,
 }
 
+const SAMPLE_RATE: u32 = 48_000;
+const CHANNELS: u8 = 2;
+const CHUNK_FRAMES: usize = 480;
+const CHUNK_BYTES: usize = CHUNK_FRAMES * CHANNELS as usize * 4;
+
 impl Recorder {
     pub fn start() -> Result<Self, String> {
-        let _ = initialize_mta();
-
-        let output_path = config::recording_filename();
+        let output_path = crate::config::recording_filename();
         let stop = Arc::new(AtomicBool::new(false));
         let (loopback_tx, loopback_rx) = bounded::<Vec<f32>>(64);
         let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
@@ -39,7 +41,12 @@ impl Recorder {
         let loopback_handle = thread::Builder::new()
             .name("loopback".into())
             .spawn(move || {
-                if let Err(err) = capture_loopback(stop_loopback, loopback_tx) {
+                if let Err(err) = capture_pulse(
+                    stop_loopback,
+                    loopback_tx,
+                    "@DEFAULT_MONITOR@",
+                    "Desktop audio",
+                ) {
                     eprintln!("Loopback capture error: {err}");
                 }
             })
@@ -49,7 +56,9 @@ impl Recorder {
         let mic_handle = thread::Builder::new()
             .name("mic".into())
             .spawn(move || {
-                if let Err(err) = capture_mic(stop_mic, mic_tx) {
+                if let Err(err) =
+                    capture_pulse(stop_mic, mic_tx, "@DEFAULT_SOURCE@", "Microphone")
+                {
                     eprintln!("Mic capture error: {err}");
                 }
             })
@@ -103,79 +112,49 @@ impl Recorder {
     }
 }
 
-fn capture_loopback(stop: Arc<AtomicBool>, tx: Sender<Vec<f32>>) -> Result<(), String> {
-    let _ = initialize_mta().ok();
-    capture_stream(stop, tx, StreamKind::Loopback).map_err(|e| e.to_string())
-}
-
-fn capture_mic(stop: Arc<AtomicBool>, tx: Sender<Vec<f32>>) -> Result<(), String> {
-    let _ = initialize_mta().ok();
-    capture_stream(stop, tx, StreamKind::Microphone).map_err(|e| e.to_string())
-}
-
-enum StreamKind {
-    Loopback,
-    Microphone,
-}
-
-fn capture_stream(
+fn capture_pulse(
     stop: Arc<AtomicBool>,
     tx: Sender<Vec<f32>>,
-    kind: StreamKind,
-) -> Result<(), wasapi::WasapiError> {
-    let enumerator = DeviceEnumerator::new()?;
-    let device = match kind {
-        StreamKind::Loopback => enumerator.get_default_device(&Direction::Render)?,
-        StreamKind::Microphone => enumerator.get_default_device(&Direction::Capture)?,
+    device: &str,
+    stream_name: &str,
+) -> Result<(), String> {
+    let spec = Spec {
+        format: Format::F32le,
+        channels: CHANNELS,
+        rate: SAMPLE_RATE,
     };
 
-    let mut audio_client = device.get_iaudioclient()?;
-    let desired_format = WaveFormat::new(32, 32, &SampleType::Float, 48_000, 2, None);
-    let blockalign = desired_format.get_blockalign() as usize;
-    let (_, min_time) = audio_client.get_device_period()?;
+    if !spec.is_valid() {
+        return Err("Invalid PulseAudio sample spec".to_string());
+    }
 
-    let mode = StreamMode::EventsShared {
-        autoconvert: true,
-        buffer_duration_hns: min_time,
-    };
+    let simple = psimple::Simple::new(
+        None,
+        "localrecord",
+        pulse::stream::Direction::Record,
+        Some(device),
+        stream_name,
+        &spec,
+        None,
+        None,
+    )
+    .map_err(|e| format!("PulseAudio open failed for {device}: {e}"))?;
 
-    let init_direction = &Direction::Capture;
-    audio_client.initialize_client(&desired_format, init_direction, &mode)?;
-    let event = audio_client.set_get_eventhandle()?;
-    let capture_client = audio_client.get_audiocaptureclient()?;
-    audio_client.start_stream()?;
-
-    let mut byte_queue: VecDeque<u8> = VecDeque::with_capacity(blockalign * 4096);
-    const CHUNK_FRAMES: usize = 480; // 10 ms at 48 kHz stereo
+    let mut byte_buf = vec![0u8; CHUNK_BYTES];
 
     while !stop.load(Ordering::SeqCst) {
-        capture_client.read_from_device_to_deque(&mut byte_queue)?;
-
-        while byte_queue.len() >= blockalign * CHUNK_FRAMES {
-            let mut chunk_bytes = Vec::with_capacity(blockalign * CHUNK_FRAMES);
-            for _ in 0..blockalign * CHUNK_FRAMES {
-                if let Some(byte) = byte_queue.pop_front() {
-                    chunk_bytes.push(byte);
+        match simple.read(&mut byte_buf) {
+            Ok(()) => {
+                let samples = bytes_to_f32_stereo(&byte_buf);
+                if tx.send(samples).is_err() {
+                    break;
                 }
             }
-            let samples = bytes_to_f32_stereo(&chunk_bytes);
-            if tx.send(samples).is_err() {
-                break;
-            }
-        }
-
-        if event.wait_for_event(200).is_err() {
-            continue;
+            Err(_err) if stop.load(Ordering::SeqCst) => break,
+            Err(err) => return Err(format!("PulseAudio read failed: {err}")),
         }
     }
 
-    if !byte_queue.is_empty() {
-        let remaining: Vec<u8> = byte_queue.drain(..).collect();
-        let samples = bytes_to_f32_stereo(&remaining);
-        let _ = tx.send(samples);
-    }
-
-    audio_client.stop_stream()?;
     Ok(())
 }
 

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Shift+R";
 pub const DEFAULT_BITRATE_KBPS: u32 = 64;
+pub const DEFAULT_AGC: bool = true;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -39,6 +40,9 @@ pub struct Settings {
     pub format: OutputFormat,
     pub bitrate_kbps: u32,
     pub recordings_dir: Option<PathBuf>,
+    /// Level the microphone and desktop streams towards a common target before
+    /// mixing, so neither one buries the other. On by default.
+    pub agc: bool,
 }
 
 impl Default for Settings {
@@ -48,6 +52,7 @@ impl Default for Settings {
             format: OutputFormat::Opus,
             bitrate_kbps: DEFAULT_BITRATE_KBPS,
             recordings_dir: None,
+            agc: DEFAULT_AGC,
         }
     }
 }
@@ -78,10 +83,11 @@ impl Settings {
             .unwrap_or_default();
 
         let content = format!(
-            "hotkey={}\nformat={}\nbitrate={}\nrecordings_dir={recordings_dir}\n",
+            "hotkey={}\nformat={}\nbitrate={}\nagc={}\nrecordings_dir={recordings_dir}\n",
             self.hotkey,
             self.format.as_str(),
-            self.bitrate_kbps
+            self.bitrate_kbps,
+            if self.agc { "on" } else { "off" }
         );
         fs::write(&path, content).map_err(|e| e.to_string())
     }
@@ -91,6 +97,14 @@ impl Settings {
         settings.recordings_dir = Some(path);
         settings.save()
     }
+
+    /// Flips the AGC setting and persists it. Returns the new value.
+    pub fn toggle_agc() -> Result<bool, String> {
+        let mut settings = Self::load();
+        settings.agc = !settings.agc;
+        settings.save()?;
+        Ok(settings.agc)
+    }
 }
 
 fn parse_settings(content: &str) -> Option<Settings> {
@@ -98,6 +112,7 @@ fn parse_settings(content: &str) -> Option<Settings> {
     let mut format = OutputFormat::Opus;
     let mut bitrate_kbps = DEFAULT_BITRATE_KBPS;
     let mut recordings_dir = None;
+    let mut agc = DEFAULT_AGC;
 
     for line in content.lines() {
         let line = line.trim();
@@ -115,6 +130,8 @@ fn parse_settings(content: &str) -> Option<Settings> {
             if let Ok(kbps) = value.trim().parse::<u32>() {
                 bitrate_kbps = kbps.clamp(32, 128);
             }
+        } else if let Some(value) = line.strip_prefix("agc=") {
+            agc = parse_bool(value).unwrap_or(DEFAULT_AGC);
         } else if let Some(value) = line.strip_prefix("recordings_dir=") {
             let value = value.trim();
             if !value.is_empty() {
@@ -128,7 +145,16 @@ fn parse_settings(content: &str) -> Option<Settings> {
         format,
         bitrate_kbps,
         recordings_dir,
+        agc,
     })
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Some(true),
+        "off" | "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
 }
 
 pub fn settings_path() -> PathBuf {
@@ -136,10 +162,17 @@ pub fn settings_path() -> PathBuf {
         return dirs.config_dir().join("settings.ini");
     }
 
-    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
+    home_dir()
         .join("Documents")
         .join("LocalRecord")
         .join("settings.ini")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -158,6 +191,15 @@ mod tests {
         let settings = parse_settings("hotkey=Ctrl+R\nformat=wav\nbitrate=96\n").unwrap();
         assert_eq!(settings.format, OutputFormat::Wav);
         assert_eq!(settings.bitrate_kbps, 96);
+    }
+
+    #[test]
+    fn agc_is_on_unless_turned_off() {
+        assert!(parse_settings("hotkey=Ctrl+R\n").unwrap().agc);
+        assert!(!parse_settings("agc=off\n").unwrap().agc);
+        assert!(parse_settings("agc=on\n").unwrap().agc);
+        // An unreadable value must not silently disable levelling.
+        assert!(parse_settings("agc=maybe\n").unwrap().agc);
     }
 
     #[test]

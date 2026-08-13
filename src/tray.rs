@@ -2,9 +2,11 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::config;
+use crate::hotkey;
 use crate::icon;
 use crate::log;
 use crate::notification;
+use crate::settings::Settings;
 use crate::startup;
 
 pub const MENU_START: &str = "start_recording";
@@ -12,6 +14,7 @@ pub const MENU_STOP: &str = "stop_recording";
 pub const MENU_OPEN: &str = "open_folder";
 pub const MENU_CHANGE_FOLDER: &str = "change_folder";
 pub const MENU_STARTUP: &str = "toggle_startup";
+pub const MENU_AGC: &str = "toggle_agc";
 pub const MENU_HOTKEY: &str = "change_hotkey";
 pub const MENU_EXIT: &str = "exit";
 
@@ -22,8 +25,10 @@ pub struct TrayController {
     start_item: MenuItem,
     stop_item: MenuItem,
     startup_item: CheckMenuItem,
+    agc_item: CheckMenuItem,
     hotkey_item: MenuItem,
     hotkey_label: String,
+    shortcut_supported: bool,
 }
 
 impl TrayController {
@@ -33,17 +38,28 @@ impl TrayController {
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
         let change_folder_item =
             MenuItem::with_id(MENU_CHANGE_FOLDER, "Change recordings folder...", true, None);
+        // A Wayland session cannot deliver the X11-grabbed shortcut, so the
+        // picker would happily save a binding that never fires. Grey it out
+        // rather than offer a setting with no effect.
+        let shortcut_supported = hotkey::global_shortcut_supported();
         let hotkey_item = MenuItem::with_id(
             MENU_HOTKEY,
-            format!("Change shortcut ({hotkey_label})"),
-            true,
+            hotkey_menu_label(hotkey_label, shortcut_supported),
+            shortcut_supported,
             None,
         );
         let startup_item = CheckMenuItem::with_id(
             MENU_STARTUP,
-            "Launch at Windows startup",
+            startup_menu_label(),
             true,
             startup::is_enabled(),
+            None,
+        );
+        let agc_item = CheckMenuItem::with_id(
+            MENU_AGC,
+            "Auto-level mic and desktop audio",
+            true,
+            Settings::load().agc,
             None,
         );
         let exit_item = MenuItem::with_id(MENU_EXIT, "Exit", true, None);
@@ -55,6 +71,7 @@ impl TrayController {
             &open_item,
             &change_folder_item,
             &hotkey_item,
+            &agc_item,
             &startup_item,
             &PredefinedMenuItem::separator(),
             &exit_item,
@@ -73,8 +90,10 @@ impl TrayController {
             start_item,
             stop_item,
             startup_item,
+            agc_item,
             hotkey_item,
             hotkey_label: hotkey_label.to_string(),
+            shortcut_supported,
         })
     }
 
@@ -89,7 +108,7 @@ impl TrayController {
     pub fn set_hotkey_label(&mut self, label: &str) -> Result<(), String> {
         self.hotkey_label = label.to_string();
         self.hotkey_item
-            .set_text(format!("Change shortcut ({label})"));
+            .set_text(hotkey_menu_label(label, self.shortcut_supported));
         self.sync_recording_state(false)
     }
 
@@ -101,13 +120,17 @@ impl TrayController {
 
     /// Re-registers the shell tray icon so right-click menu works again after toasts.
     fn repair_tray_icon(&mut self) -> Result<(), String> {
-        crate::balloon::invalidate_tray_target();
+        #[cfg(windows)]
+        {
+            crate::balloon::invalidate_tray_target();
+        }
         self.tray
             .set_visible(false)
             .map_err(|e| format!("Failed to hide tray icon during repair: {e}"))?;
         self.tray
             .set_visible(true)
             .map_err(|e| format!("Failed to restore tray icon during repair: {e}"))?;
+        #[cfg(windows)]
         crate::balloon::focus_tray_for_menu();
         Ok(())
     }
@@ -157,6 +180,7 @@ impl TrayController {
             }
             MENU_CHANGE_FOLDER => Some(TrayAction::ChangeRecordingsFolder),
             MENU_STARTUP => Some(TrayAction::ToggleStartup),
+            MENU_AGC => Some(TrayAction::ToggleAgc),
             MENU_HOTKEY => Some(TrayAction::ChangeHotkey),
             MENU_EXIT => Some(TrayAction::Exit),
             _ => None,
@@ -172,6 +196,18 @@ impl TrayController {
 
     pub fn set_startup_checked(&mut self, enabled: bool) {
         let _ = self.startup_item.set_checked(enabled);
+    }
+
+    pub fn set_agc_checked(&mut self, enabled: bool) {
+        let _ = self.agc_item.set_checked(enabled);
+    }
+}
+
+fn hotkey_menu_label(label: &str, supported: bool) -> String {
+    if supported {
+        format!("Change shortcut ({label})")
+    } else {
+        "Change shortcut (unavailable on Wayland)".to_string()
     }
 }
 
@@ -190,6 +226,7 @@ pub enum TrayAction {
     Stop,
     Toggle,
     ToggleStartup,
+    ToggleAgc,
     ChangeHotkey,
     ChangeRecordingsFolder,
     Exit,
@@ -197,13 +234,31 @@ pub enum TrayAction {
 
 pub fn open_recordings_folder() {
     let path = config::recordings_dir();
-    #[cfg(windows)]
-    if let Err(err) = open_folder_windows(&path) {
+    if let Err(err) = open_folder(&path) {
         log::error(&format!("Failed to open {}: {err}", path.display()));
     }
+}
 
-    #[cfg(not(windows))]
-    log::info(&format!("Recordings folder: {}", path.display()));
+fn open_folder(path: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("create_dir_all failed: {e}"))?;
+
+    #[cfg(windows)]
+    return open_folder_windows(path);
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        log::info(&format!("Recordings folder: {}", path.display()));
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -238,4 +293,19 @@ fn open_folder_windows(path: &std::path::Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn startup_menu_label() -> &'static str {
+    "Launch at Windows startup"
+}
+
+#[cfg(target_os = "linux")]
+fn startup_menu_label() -> &'static str {
+    "Launch at login"
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn startup_menu_label() -> &'static str {
+    "Launch at startup"
 }

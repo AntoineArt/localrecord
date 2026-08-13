@@ -12,6 +12,11 @@ pub fn error(message: &str) {
 }
 
 fn write(level: &str, message: &str) {
+    let path = config::log_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
     let line = format!(
         "[{}] {} {}\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
