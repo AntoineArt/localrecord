@@ -19,10 +19,16 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Name Windows asset
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mv target/release/localrecord.exe "localrecord-${version}.exe"
+
       - name: Upload Windows binary
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/localrecord.exe
+          files: localrecord-*.exe
           generate_release_notes: true
 
   build-linux:
@@ -40,8 +46,13 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Name Linux asset
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mv target/release/localrecord "localrecord-${version}-x86_64-linux"
+
       - name: Upload Linux binary
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/localrecord
+          files: localrecord-*-x86_64-linux
           generate_release_notes: true
