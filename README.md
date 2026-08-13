@@ -16,7 +16,7 @@ Quick recordings without opening a full DAW or OBS. One hotkey toggles capture o
 
 ## Features
 
-- **Dual capture** — WASAPI loopback (desktop/apps) + microphone, mixed to one file
+- **Dual capture** — desktop audio (WASAPI loopback on Windows, PulseAudio/PipeWire on Linux) plus microphone, mixed to one file
 - **Auto-levelling (AGC)** — each source is levelled independently so a quiet mic is not buried under loud desktop audio
 - **Compact Opus output** — default `.opus` format (~30 MB/hour at 64 kbps vs ~660 MB/hour WAV)
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu

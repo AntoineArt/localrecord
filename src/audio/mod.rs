@@ -1,5 +1,6 @@
 mod agc;
 mod mixer;
+mod pcm;
 mod recorder;
 pub mod wav;
 

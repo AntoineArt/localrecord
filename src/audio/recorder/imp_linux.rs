@@ -3,10 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use libpulse_binding as pulse;
 use libpulse_simple_binding as psimple;
 use pulse::sample::{Format, Spec};
+
+use crate::audio::pcm::bytes_to_f32;
 
 use super::mix_output;
 
@@ -33,9 +35,9 @@ impl Recorder {
     pub fn start() -> Result<Self, String> {
         let output_path = crate::config::recording_filename();
         let stop = Arc::new(AtomicBool::new(false));
-        let (loopback_tx, loopback_rx) = bounded::<Vec<f32>>(64);
-        let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
-        let (result_tx, result_rx) = bounded::<Result<u64, String>>(1);
+        let (loopback_tx, loopback_rx) = unbounded::<Vec<f32>>();
+        let (mic_tx, mic_rx) = unbounded::<Vec<f32>>();
+        let (result_tx, result_rx) = unbounded::<Result<u64, String>>();
 
         let stop_loopback = Arc::clone(&stop);
         let loopback_handle = thread::Builder::new()
@@ -145,7 +147,7 @@ fn capture_pulse(
     while !stop.load(Ordering::SeqCst) {
         match simple.read(&mut byte_buf) {
             Ok(()) => {
-                let samples = bytes_to_f32_stereo(&byte_buf);
+                let samples = bytes_to_f32(&byte_buf);
                 if tx.send(samples).is_err() {
                     break;
                 }
@@ -156,11 +158,4 @@ fn capture_pulse(
     }
 
     Ok(())
-}
-
-fn bytes_to_f32_stereo(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
 }

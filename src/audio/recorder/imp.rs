@@ -1,12 +1,12 @@
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use wasapi::*;
 
+use crate::audio::pcm::append_packet_samples;
 use crate::config;
 
 use super::mix_output;
@@ -31,9 +31,10 @@ impl Recorder {
 
         let output_path = config::recording_filename();
         let stop = Arc::new(AtomicBool::new(false));
-        let (loopback_tx, loopback_rx) = bounded::<Vec<f32>>(64);
-        let (mic_tx, mic_rx) = bounded::<Vec<f32>>(64);
-        let (result_tx, result_rx) = bounded::<Result<u64, String>>(1);
+        // Unbounded so capture threads never block on send and miss WASAPI packets.
+        let (loopback_tx, loopback_rx) = unbounded::<Vec<f32>>();
+        let (mic_tx, mic_rx) = unbounded::<Vec<f32>>();
+        let (result_tx, result_rx) = unbounded::<Result<u64, String>>();
 
         let stop_loopback = Arc::clone(&stop);
         let loopback_handle = thread::Builder::new()
@@ -118,6 +119,8 @@ enum StreamKind {
     Microphone,
 }
 
+const CHUNK_FRAMES: usize = 480; // 10 ms at 48 kHz stereo
+
 fn capture_stream(
     stop: Arc<AtomicBool>,
     tx: Sender<Vec<f32>>,
@@ -132,11 +135,13 @@ fn capture_stream(
     let mut audio_client = device.get_iaudioclient()?;
     let desired_format = WaveFormat::new(32, 32, &SampleType::Float, 48_000, 2, None);
     let blockalign = desired_format.get_blockalign() as usize;
-    let (_, min_time) = audio_client.get_device_period()?;
 
+    // 100 ms endpoint buffer. The previous min-period size (~3-10 ms) overran
+    // whenever a packet drain was late, which sounds like crackling.
+    const BUFFER_HNS: i64 = 1_000_000;
     let mode = StreamMode::EventsShared {
         autoconvert: true,
-        buffer_duration_hns: min_time,
+        buffer_duration_hns: BUFFER_HNS,
     };
 
     let init_direction = &Direction::Capture;
@@ -145,43 +150,73 @@ fn capture_stream(
     let capture_client = audio_client.get_audiocaptureclient()?;
     audio_client.start_stream()?;
 
-    let mut byte_queue: VecDeque<u8> = VecDeque::with_capacity(blockalign * 4096);
-    const CHUNK_FRAMES: usize = 480; // 10 ms at 48 kHz stereo
+    let mut scratch = vec![0u8; blockalign * 48_000];
+    let mut pending: Vec<f32> = Vec::with_capacity(CHUNK_FRAMES * 2 * 4);
 
     while !stop.load(Ordering::SeqCst) {
-        capture_client.read_from_device_to_deque(&mut byte_queue)?;
-
-        while byte_queue.len() >= blockalign * CHUNK_FRAMES {
-            let mut chunk_bytes = Vec::with_capacity(blockalign * CHUNK_FRAMES);
-            for _ in 0..blockalign * CHUNK_FRAMES {
-                if let Some(byte) = byte_queue.pop_front() {
-                    chunk_bytes.push(byte);
-                }
-            }
-            let samples = bytes_to_f32_stereo(&chunk_bytes);
-            if tx.send(samples).is_err() {
-                break;
-            }
-        }
-
-        if event.wait_for_event(200).is_err() {
-            continue;
+        let _ = event.wait_for_event(50);
+        drain_available_packets(&capture_client, &mut scratch, blockalign, &mut pending)?;
+        if flush_pending_chunks(&mut pending, &tx, false) {
+            break;
         }
     }
 
-    if !byte_queue.is_empty() {
-        let remaining: Vec<u8> = byte_queue.drain(..).collect();
-        let samples = bytes_to_f32_stereo(&remaining);
-        let _ = tx.send(samples);
-    }
+    drain_available_packets(&capture_client, &mut scratch, blockalign, &mut pending)?;
+    let _ = flush_pending_chunks(&mut pending, &tx, true);
 
     audio_client.stop_stream()?;
     Ok(())
 }
 
-fn bytes_to_f32_stereo(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
+fn drain_available_packets(
+    capture_client: &AudioCaptureClient,
+    scratch: &mut Vec<u8>,
+    blockalign: usize,
+    pending: &mut Vec<f32>,
+) -> Result<(), wasapi::WasapiError> {
+    loop {
+        let frames = match capture_client.get_next_packet_size()? {
+            Some(0) | None => break,
+            Some(n) => n as usize,
+        };
+        let needed = frames.saturating_mul(blockalign);
+        if scratch.len() < needed {
+            scratch.resize(needed, 0);
+        }
+        let (nframes, info) = capture_client.read_from_device(scratch)?;
+        if nframes == 0 {
+            break;
+        }
+        let nbytes = nframes as usize * blockalign;
+        if nbytes > scratch.len() {
+            continue;
+        }
+        append_packet_samples(pending, &scratch[..nbytes], info.flags.silent);
+    }
+    Ok(())
+}
+
+/// Returns true if the mixer hung up.
+fn flush_pending_chunks(pending: &mut Vec<f32>, tx: &Sender<Vec<f32>>, flush_all: bool) -> bool {
+    let chunk_samples = CHUNK_FRAMES * 2;
+    loop {
+        let take = if flush_all {
+            pending.len() - pending.len() % 2
+        } else if pending.len() >= chunk_samples {
+            chunk_samples
+        } else {
+            break;
+        };
+        if take < 2 {
+            break;
+        }
+        let chunk: Vec<f32> = pending.drain(..take).collect();
+        if tx.send(chunk).is_err() {
+            return true;
+        }
+        if flush_all {
+            break;
+        }
+    }
+    false
 }
