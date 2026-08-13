@@ -28,7 +28,7 @@ When the user says **RELEASE** (or asks to build and release), run the full pipe
 ## 3. Verify
 
 - Latest release: `gh release list -R AntoineArt/localrecord --limit 1`
-- Asset present: `localrecord.exe` on the new tag
+- Asset present: `localrecord-X.Y.Z.exe` and `localrecord-X.Y.Z-x86_64-linux` on the new tag
 - Site live: https://localrecord.doublea.engineering shows updated version via `release.js`
 
 ## Repos

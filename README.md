@@ -51,15 +51,15 @@ sudo pacman -S --needed libpulse opus gtk3 libappindicator-gtk3 pipewire-pulse z
 
 ### Windows
 
-1. Download [`localrecord.exe`](https://github.com/AntoineArt/localrecord/releases/latest/download/localrecord.exe) from the latest release
+1. Download [`localrecord-x.y.z.exe`](https://github.com/AntoineArt/localrecord/releases/latest) from the latest release (filename includes the version)
 2. Place it anywhere you like (Downloads, `Program Files`, etc.)
 3. Run it — it appears in the system tray
 
 ### Linux
 
-1. Download [`localrecord`](https://github.com/AntoineArt/localrecord/releases/latest/download/localrecord) from the latest release, or build from source (see below)
-2. Make it executable: `chmod +x localrecord`
-3. Run `./localrecord` — it appears in the system tray
+1. Download [`localrecord-x.y.z-x86_64-linux`](https://github.com/AntoineArt/localrecord/releases/latest) from the latest release, or build from source (see below)
+2. Make it executable: `chmod +x localrecord-*-x86_64-linux`
+3. Run it — it appears in the system tray
 
 Or build locally:
 
@@ -81,7 +81,7 @@ The app uses microphone capture, global hotkeys, clipboard access, and an option
 
 ## Usage
 
-1. Launch `localrecord.exe`
+1. Launch the downloaded `.exe`
 2. Press your shortcut (default **Ctrl+Shift+R**) or use the tray menu to start
 3. Press the shortcut again or choose **Stop recording**
 4. Paste into your editor, or find the file in the recordings folder
