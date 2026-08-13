@@ -2,13 +2,15 @@
 mod imp;
 
 #[cfg(windows)]
-pub use imp::create;
+pub fn create() -> ClipboardOwner {
+    imp::create().0 as isize
+}
 
 #[cfg(not(windows))]
 pub fn create() {}
 
 #[cfg(windows)]
-pub type ClipboardOwner = windows::Win32::Foundation::HWND;
+pub type ClipboardOwner = isize;
 
 #[cfg(not(windows))]
 pub type ClipboardOwner = ();

@@ -1,6 +1,6 @@
 [package]
 name = "localrecord"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 description = "Lightweight tray app to record mic + desktop audio"
 license = "MIT"

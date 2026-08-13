@@ -23,8 +23,9 @@ pub fn init_clipboard() {
 pub fn copy_recording_to_clipboard(
     wav_bytes: Option<&[u8]>,
     file_path: &Path,
-    owner: HWND,
+    owner: isize,
 ) -> Result<(), String> {
+    let owner = HWND(owner as *mut std::ffi::c_void);
     if let Some(wav_bytes) = wav_bytes {
         if wav_bytes.is_empty() {
             return Err("No audio data to copy".to_string());
