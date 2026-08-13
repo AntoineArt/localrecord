@@ -249,7 +249,7 @@ If you have a certificate, use `scripts/sign.ps1` after building. See the script
 
 Same core approach as OBS on Windows:
 
-1. **Desktop audio** — WASAPI loopback on the default render device
+1. **Desktop audio** — WASAPI loopback on the default render device, captured in that device's mix format and converted to 48 kHz stereo (Windows often ignores format conversion on loopback)
 2. **Microphone** — WASAPI capture on the default input device
 3. **Auto-level** — each stream levelled independently towards −20 dBFS RMS (unless `agc=off`)
 4. **Mix** — both streams mixed to 48 kHz stereo in software, then soft-limited at −1 dBFS

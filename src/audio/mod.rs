@@ -1,4 +1,6 @@
 mod agc;
+#[cfg(any(windows, test))]
+mod convert;
 mod mixer;
 mod pcm;
 mod recorder;
