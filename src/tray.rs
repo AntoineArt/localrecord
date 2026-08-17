@@ -38,10 +38,11 @@ impl TrayController {
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
         let change_folder_item =
             MenuItem::with_id(MENU_CHANGE_FOLDER, "Change recordings folder...", true, None);
-        // A Wayland session cannot deliver the X11-grabbed shortcut, so the
-        // picker would happily save a binding that never fires. Grey it out
-        // rather than offer a setting with no effect.
-        let shortcut_supported = hotkey::global_shortcut_supported();
+        // A Wayland session cannot deliver the X11-grabbed shortcut, and where
+        // no compositor binding can stand in for it the picker would happily
+        // save a shortcut that never fires. Grey it out rather than offer a
+        // setting with no effect.
+        let shortcut_supported = hotkey::shortcut_configurable();
         let hotkey_item = MenuItem::with_id(
             MENU_HOTKEY,
             hotkey_menu_label(hotkey_label, shortcut_supported),

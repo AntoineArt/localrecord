@@ -98,6 +98,14 @@ impl Settings {
         settings.save()
     }
 
+    /// Persists the shortcut on its own, for the paths where the binding lives
+    /// in the compositor rather than in a key grab we hold.
+    pub fn set_hotkey(binding: &str) -> Result<(), String> {
+        let mut settings = Self::load();
+        settings.hotkey = binding.to_string();
+        settings.save()
+    }
+
     /// Flips the AGC setting and persists it. Returns the new value.
     pub fn toggle_agc() -> Result<bool, String> {
         let mut settings = Self::load();

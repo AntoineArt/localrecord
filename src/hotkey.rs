@@ -106,6 +106,25 @@ pub fn global_shortcut_supported() -> bool {
     true
 }
 
+/// Whether the tray's picker can produce a shortcut that actually fires.
+///
+/// Wider than [`global_shortcut_supported`]: where the X11 grab is dead, a
+/// compositor we know how to configure can carry the binding for us instead —
+/// see [`crate::hypr`].
+pub fn shortcut_configurable() -> bool {
+    global_shortcut_supported() || compositor_binding_supported()
+}
+
+#[cfg(target_os = "linux")]
+fn compositor_binding_supported() -> bool {
+    crate::hypr::available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn compositor_binding_supported() -> bool {
+    false
+}
+
 /// What to tell the user instead, when the shortcut cannot work.
 pub const WAYLAND_SHORTCUT_HINT: &str =
     "Global shortcut unavailable on Wayland — bind `pkill -USR1 -x localrecord` in your compositor";

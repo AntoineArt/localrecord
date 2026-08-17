@@ -24,8 +24,11 @@ pub fn pick_hotkey(current: &str) -> Option<String> {
         return None;
     }
 
+    // Confirming the shortcut already in force is a real answer, not a cancel:
+    // on Wayland it is how the binding gets written into the compositor for the
+    // first time. Callers treat re-applying the same key as a no-op anyway.
     let picked = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if picked.is_empty() || picked == current {
+    if picked.is_empty() {
         return None;
     }
 

@@ -119,7 +119,7 @@ impl App {
     fn change_hotkey(&mut self) {
         // The menu item is disabled where this cannot work, but the action is
         // still reachable, so refuse rather than save a binding that never fires.
-        if !hotkey::global_shortcut_supported() {
+        if !hotkey::shortcut_configurable() {
             self.tray.notify(hotkey::WAYLAND_SHORTCUT_HINT, false);
             return;
         }
@@ -130,6 +130,19 @@ impl App {
         ) {
             self.tray
                 .notify("Stop recording before changing shortcut", false);
+            return;
+        }
+
+        // On Wayland the compositor holds the binding, so the grab we own is
+        // inert: nothing to pause around the picker, and the shortcut in force
+        // is the saved one rather than whatever that grab holds.
+        #[cfg(target_os = "linux")]
+        if !hotkey::global_shortcut_supported() {
+            let current = Settings::load().hotkey;
+            match hotkey::pick_hotkey_interactive(&current) {
+                Some(new_binding) => self.set_compositor_hotkey(&new_binding),
+                None => log::info("Shortcut change cancelled"),
+            }
             return;
         }
 
@@ -171,6 +184,39 @@ impl App {
                 }
             },
         }
+    }
+
+    /// Writes the picked shortcut into the compositor, which is the only thing
+    /// that can deliver it on Wayland. See [`crate::hypr`].
+    #[cfg(target_os = "linux")]
+    fn set_compositor_hotkey(&mut self, new_binding: &str) {
+        if let Err(err) = crate::hypr::set_toggle_binding(new_binding) {
+            log::error(&format!("Failed to set shortcut in Hyprland: {err}"));
+            self.tray
+                .notify("Could not set that shortcut in Hyprland", false);
+            return;
+        }
+
+        if let Err(err) = Settings::set_hotkey(new_binding) {
+            log::error(&format!("Failed to save shortcut: {err}"));
+        }
+        // Keeps the inert grab in step with the setting, so an X11 session
+        // started later picks up the same key. Failure here changes nothing.
+        let _ = self.hotkeys.replace(new_binding);
+        let _ = self.tray.set_hotkey_label(new_binding);
+
+        let mut msg = format!("Shortcut changed to {new_binding}");
+        let conflicts = crate::hypr::manual_binding_conflicts();
+        if !conflicts.is_empty() {
+            // Ours is additive: a hand-written binding keeps firing on its own
+            // key, which reads as the shortcut not having changed at all.
+            msg.push_str(&format!(
+                " — also remove the localrecord binding in {}",
+                conflicts.join(", ")
+            ));
+        }
+        self.tray.notify(&msg, false);
+        log::info(&msg);
     }
 
     fn change_recordings_folder(&mut self) {

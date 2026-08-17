@@ -15,6 +15,8 @@ mod hotkey_format;
 mod hotkey_picker;
 #[cfg(target_os = "linux")]
 mod hotkey_picker_linux;
+#[cfg(target_os = "linux")]
+mod hypr;
 mod icon;
 mod log;
 mod notification;
@@ -120,7 +122,7 @@ fn run() {
 
     let app = App::new(clipboard_owner, app_proxy).expect("initialize LocalRecord");
     log::info("LocalRecord started");
-    if !hotkey::global_shortcut_supported() {
+    if !hotkey::shortcut_configurable() {
         log::info(hotkey::WAYLAND_SHORTCUT_HINT);
     }
 

@@ -186,8 +186,27 @@ bindsym Ctrl+Shift+r exec pkill -USR1 -x localrecord
 
 This works on X11 too, so it is a reasonable binding to keep either way.
 
-The tray's **Change shortcut** entry is greyed out on Wayland and reads
-*"Change shortcut (unavailable on Wayland)"*, since anything set there would be
+### Picking the shortcut from the tray, on Hyprland
+
+Under Hyprland the tray's **Change shortcut** entry stays usable: LocalRecord
+writes the binding above into a file of its own and reloads the compositor, so
+the shortcut you pick takes effect immediately.
+
+- Lua config (`hyprland.lua` present): `~/.config/hypr/localrecord.lua`, loaded
+  by a `dofile` line appended once to `hyprland.lua`.
+- Legacy config: `~/.config/hypr/localrecord.conf`, loaded by a `source` line
+  appended once to `hyprland.conf`.
+
+Nothing else in your config is touched. If you already bind
+`pkill -USR1 -x localrecord` by hand, remove that line — the two bindings would
+otherwise both fire, and on the same key they would cancel each other out.
+LocalRecord names the offending files in the message it shows after a change.
+
+To take the binding back into your own hands, delete the generated file and its
+load line.
+
+On every other Wayland session the entry is greyed out and reads *"Change
+shortcut (unavailable on Wayland)"*, since anything set there would be
 registered and never fire. Change the compositor binding above instead.
 
 ## Tray menu
@@ -198,7 +217,7 @@ registered and never fire. Change the compositor binding above instead.
 | Stop recording | Stop, save file, copy to clipboard |
 | Open recordings folder | Open output directory in Explorer |
 | Change recordings folder... | Pick a custom save location |
-| Change shortcut | Pick a new global hotkey — disabled on Wayland, see above |
+| Change shortcut | Pick a new global hotkey — writes the compositor binding on Hyprland, disabled on other Wayland sessions, see above |
 | Auto-level mic and desktop audio | Toggle AGC — applies to the next recording |
 | Launch at startup | Toggle auto-start (Windows registry or XDG autostart on Linux) |
 | Exit | Quit the app |
