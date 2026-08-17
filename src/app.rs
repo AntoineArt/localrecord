@@ -108,8 +108,7 @@ impl App {
                     format.as_str().to_uppercase(),
                     self.next_recording_suffix()
                 );
-                self.tray.notify(&msg, false);
-                log::info(&msg);
+                self.setting_changed(&msg);
             }
             Err(err) => {
                 log::error(&format!("Failed to save format: {err}"));
@@ -129,8 +128,7 @@ impl App {
                     Settings::load().bitrate_kbps,
                     self.next_recording_suffix()
                 );
-                self.tray.notify(&msg, false);
-                log::info(&msg);
+                self.setting_changed(&msg);
             }
             Err(err) => {
                 log::error(&format!("Failed to save bitrate: {err}"));
@@ -154,8 +152,7 @@ impl App {
                 } else {
                     format!("Tray icon hidden — {} still works", Settings::load().hotkey)
                 };
-                self.tray.notify(&msg, false);
-                log::info(&msg);
+                self.setting_changed(&msg);
             }
             Err(err) => {
                 log::error(&format!("Failed to save tray setting: {err}"));
@@ -163,6 +160,16 @@ impl App {
                     .notify("Could not update the tray icon setting", false);
             }
         }
+    }
+
+    /// Records a setting change without a toast.
+    ///
+    /// Every surface that can ask for one already shows the result: the tray
+    /// menu has checkmarks and labels, the bar widget has switches reading the
+    /// published state. A notification would only repeat what the user is
+    /// looking at, one per click. Failures still notify — nothing else says so.
+    fn setting_changed(&self, message: &str) {
+        log::info(message);
     }
 
     /// The encoder reads both settings once, when a recording starts.
@@ -282,9 +289,7 @@ impl App {
                     let _ = self.tray.set_hotkey_label(&label);
                     #[cfg(target_os = "linux")]
                     crate::state::refresh();
-                    let msg = format!("Shortcut changed to {label}");
-                    self.tray.notify(&msg, false);
-                    log::info(&msg);
+                    self.setting_changed(&format!("Shortcut changed to {label}"));
                 }
                 Err(err) => {
                     log::error(&format!("Failed to set shortcut: {err}"));
@@ -322,14 +327,18 @@ impl App {
 
         let mut msg = format!("Shortcut changed to {new_binding}");
         let conflicts = crate::hypr::manual_binding_conflicts();
-        if !conflicts.is_empty() {
-            // Ours is additive: a hand-written binding keeps firing on its own
-            // key, which reads as the shortcut not having changed at all.
-            msg.push_str(&format!(
-                " — also remove the localrecord binding in {}",
-                conflicts.join(", ")
-            ));
+        if conflicts.is_empty() {
+            self.setting_changed(&msg);
+            return;
         }
+
+        // The one shortcut change worth interrupting for: ours is additive, so a
+        // hand-written binding keeps firing on its own key, and the change reads
+        // as having done nothing. Nowhere else would say which file to edit.
+        msg.push_str(&format!(
+            " — also remove the localrecord binding in {}",
+            conflicts.join(", ")
+        ));
         self.tray.notify(&msg, false);
         log::info(&msg);
     }
@@ -355,9 +364,10 @@ impl App {
                 Ok(()) => {
                     #[cfg(target_os = "linux")]
                     crate::state::refresh();
-                    let msg = format!("Recordings will be saved to {}", path.display());
-                    self.tray.notify(&msg, false);
-                    log::info(&msg);
+                    self.setting_changed(&format!(
+                        "Recordings will be saved to {}",
+                        path.display()
+                    ));
                 }
                 Err(err) => {
                     log::error(&format!("Failed to save recordings folder: {err}"));
@@ -386,8 +396,7 @@ impl App {
                 } else {
                     "LocalRecord startup disabled"
                 };
-                self.tray.notify(msg, false);
-                log::info(msg);
+                self.setting_changed(msg);
             }
             Err(err) => {
                 log::error(&format!("Startup toggle failed: {err}"));
@@ -417,8 +426,7 @@ impl App {
                 } else {
                     msg.to_string()
                 };
-                self.tray.notify(&msg, false);
-                log::info(&msg);
+                self.setting_changed(&msg);
             }
             Err(err) => {
                 log::error(&format!("Auto-levelling toggle failed: {err}"));
