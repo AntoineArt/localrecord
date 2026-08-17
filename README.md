@@ -231,6 +231,9 @@ and renamed into place, so a reader never catches a half-written one:
   "agc": true,
   "hotkey": "Ctrl+Shift+R",
   "format": "opus",
+  "bitrate": 64,
+  "startup": false,
+  "tray": true,
   "recordings_dir": "/home/you/.local/share/localrecord/recordings"
 }
 ```
