@@ -4,6 +4,8 @@ use std::path::PathBuf;
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Shift+R";
 pub const DEFAULT_BITRATE_KBPS: u32 = 64;
 pub const DEFAULT_AGC: bool = true;
+/// The tray icon is the only UI on most desktops, so it stays unless asked.
+pub const DEFAULT_TRAY: bool = true;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -43,6 +45,10 @@ pub struct Settings {
     /// Level the microphone and desktop streams towards a common target before
     /// mixing, so neither one buries the other. On by default.
     pub agc: bool,
+    /// Show the tray icon. Worth turning off only where something else drives
+    /// the app — an Omarchy bar widget, a compositor shortcut — since it is
+    /// otherwise the whole of the app's interface.
+    pub tray: bool,
 }
 
 impl Default for Settings {
@@ -53,6 +59,7 @@ impl Default for Settings {
             bitrate_kbps: DEFAULT_BITRATE_KBPS,
             recordings_dir: None,
             agc: DEFAULT_AGC,
+            tray: DEFAULT_TRAY,
         }
     }
 }
@@ -83,11 +90,12 @@ impl Settings {
             .unwrap_or_default();
 
         let content = format!(
-            "hotkey={}\nformat={}\nbitrate={}\nagc={}\nrecordings_dir={recordings_dir}\n",
+            "hotkey={}\nformat={}\nbitrate={}\nagc={}\ntray={}\nrecordings_dir={recordings_dir}\n",
             self.hotkey,
             self.format.as_str(),
             self.bitrate_kbps,
-            if self.agc { "on" } else { "off" }
+            if self.agc { "on" } else { "off" },
+            if self.tray { "on" } else { "off" }
         );
         fs::write(&path, content).map_err(|e| e.to_string())
     }
@@ -106,12 +114,34 @@ impl Settings {
         settings.save()
     }
 
+    pub fn set_format(format: OutputFormat) -> Result<(), String> {
+        let mut settings = Self::load();
+        settings.format = format;
+        settings.save()
+    }
+
+    /// Clamped to what the encoder accepts, the same range the settings parser
+    /// enforces when reading the file back.
+    pub fn set_bitrate(kbps: u32) -> Result<(), String> {
+        let mut settings = Self::load();
+        settings.bitrate_kbps = kbps.clamp(32, 128);
+        settings.save()
+    }
+
     /// Flips the AGC setting and persists it. Returns the new value.
     pub fn toggle_agc() -> Result<bool, String> {
         let mut settings = Self::load();
         settings.agc = !settings.agc;
         settings.save()?;
         Ok(settings.agc)
+    }
+
+    /// Flips the tray icon setting and persists it. Returns the new value.
+    pub fn toggle_tray() -> Result<bool, String> {
+        let mut settings = Self::load();
+        settings.tray = !settings.tray;
+        settings.save()?;
+        Ok(settings.tray)
     }
 }
 
@@ -121,6 +151,7 @@ fn parse_settings(content: &str) -> Option<Settings> {
     let mut bitrate_kbps = DEFAULT_BITRATE_KBPS;
     let mut recordings_dir = None;
     let mut agc = DEFAULT_AGC;
+    let mut tray = DEFAULT_TRAY;
 
     for line in content.lines() {
         let line = line.trim();
@@ -140,6 +171,8 @@ fn parse_settings(content: &str) -> Option<Settings> {
             }
         } else if let Some(value) = line.strip_prefix("agc=") {
             agc = parse_bool(value).unwrap_or(DEFAULT_AGC);
+        } else if let Some(value) = line.strip_prefix("tray=") {
+            tray = parse_bool(value).unwrap_or(DEFAULT_TRAY);
         } else if let Some(value) = line.strip_prefix("recordings_dir=") {
             let value = value.trim();
             if !value.is_empty() {
@@ -154,6 +187,7 @@ fn parse_settings(content: &str) -> Option<Settings> {
         bitrate_kbps,
         recordings_dir,
         agc,
+        tray,
     })
 }
 
@@ -199,6 +233,16 @@ mod tests {
         let settings = parse_settings("hotkey=Ctrl+R\nformat=wav\nbitrate=96\n").unwrap();
         assert_eq!(settings.format, OutputFormat::Wav);
         assert_eq!(settings.bitrate_kbps, 96);
+    }
+
+    #[test]
+    fn tray_is_shown_unless_turned_off() {
+        // Missing, unreadable, or absent: the icon stays. Losing it silently
+        // would leave a desktop with no interface at all.
+        assert!(parse_settings("hotkey=Ctrl+R\n").unwrap().tray);
+        assert!(parse_settings("tray=maybe\n").unwrap().tray);
+        assert!(parse_settings("tray=on\n").unwrap().tray);
+        assert!(!parse_settings("tray=off\n").unwrap().tray);
     }
 
     #[test]

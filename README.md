@@ -238,20 +238,48 @@ and renamed into place, so a reader never catches a half-written one:
 `pid` is there to be checked: nothing else distinguishes a crashed app from an
 idle one.
 
-**Writing.** Signals, so nothing has to edit the settings file behind the app's
-back and leave its tray menu stale:
+**Writing.** Two channels, so nothing has to edit the settings file behind the
+app's back and leave its tray menu stale.
+
+Signals, for a compositor binding — they need no path and no shell:
 
 ```bash
 pkill -USR1 -x localrecord   # start/stop recording
 pkill -USR2 -x localrecord   # toggle auto-levelling
 ```
 
+And `~/.local/share/localrecord/command` for everything else, one command per
+line, appended. A signal carries no value; a format or a bitrate has one:
+
+```bash
+echo "format wav"  >> ~/.local/share/localrecord/command
+echo "bitrate 96"  >> ~/.local/share/localrecord/command
+echo "tray"        >> ~/.local/share/localrecord/command   # show/hide the icon
+echo "startup"     >> ~/.local/share/localrecord/command
+echo "shortcut"    >> ~/.local/share/localrecord/command   # opens the picker
+echo "folder"      >> ~/.local/share/localrecord/command   # opens the picker
+echo "record"      >> ~/.local/share/localrecord/command
+echo "agc"         >> ~/.local/share/localrecord/command
+echo "quit"        >> ~/.local/share/localrecord/command
+```
+
+Each one is applied through the same code path the tray menu uses, so the menu,
+the state file and any widget reading it stay in agreement.
+
+### Hiding the tray icon
+
+Where something else drives the app — the Omarchy widget below, or just the
+shortcut — the icon is no longer needed. `tray=off` in `settings.ini`, or the
+switch in the widget's panel, takes it out of the tray without stopping the app.
+It is on by default, and Linux-only: everywhere else the icon is the whole
+interface.
+
 ### Omarchy bar widget
 
 [localrecord-omarchy-plugin](https://github.com/AntoineArt/localrecord-omarchy-plugin)
 puts all of that in the Omarchy bar — a microphone glyph, a red REC dot with a
-running clock while recording, and a popup with the tray menu's controls and the
-last recording:
+running clock while recording, and a panel holding every setting, the last
+recording, and the switch that hides the tray icon:
 
 ```bash
 omarchy plugin add https://github.com/AntoineArt/localrecord-omarchy-plugin.git --enable
@@ -269,6 +297,8 @@ omarchy plugin add https://github.com/AntoineArt/localrecord-omarchy-plugin.git 
 | Auto-level mic and desktop audio | Toggle AGC — applies to the next recording |
 | Launch at startup | Toggle auto-start (Windows registry or XDG autostart on Linux) |
 | Exit | Quit the app |
+
+On Linux the icon can be hidden entirely — see [Hiding the tray icon](#hiding-the-tray-icon).
 
 ## Build from source
 

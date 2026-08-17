@@ -39,8 +39,85 @@ static CURRENT: Mutex<State> = Mutex::new(State {
 
 /// Publishes the idle state, so a reader that starts before the first recording
 /// still finds the pid, the paths and the settings.
+///
+/// The last recording is carried over from the previous run: it is a fact about
+/// the folder, not about this process, and a widget that offered "nothing
+/// recorded yet" after every restart would be lying.
 pub fn init() {
-    publish(|_| {});
+    let previous = fs::read_to_string(state_file()).unwrap_or_default();
+    publish(|state| {
+        state.last_file = field(&previous, "last_file");
+        state.last_saved_at = field(&previous, "last_saved_at").parse().unwrap_or(0);
+        if state.last_file.is_empty() {
+            if let Some((path, saved_at)) = newest_recording() {
+                state.last_file = path;
+                state.last_saved_at = saved_at;
+            }
+        }
+    });
+}
+
+/// Fallback for a first run, or a state file that was cleared: the newest file
+/// in the recordings folder is the last recording, whether or not this app is
+/// the one that wrote the state file it came from.
+fn newest_recording() -> Option<(String, u64)> {
+    let entries = fs::read_dir(crate::config::recordings_dir()).ok()?;
+
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "opus" || extension == "wav")
+        })
+        .filter_map(|entry| {
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            Some((entry.path().display().to_string(), modified))
+        })
+        .max_by_key(|(_, modified)| *modified)
+}
+
+/// Minimal reader for a file this module wrote itself, rather than a JSON
+/// dependency for two fields.
+fn field(json: &str, name: &str) -> String {
+    let needle = format!("\"{name}\":");
+    let Some(start) = json.find(&needle) else {
+        return String::new();
+    };
+
+    let rest = json[start + needle.len()..].trim_start();
+    match rest.strip_prefix('"') {
+        // A quoted value ends at the first quote that is not escaped.
+        Some(quoted) => {
+            let mut value = String::new();
+            let mut characters = quoted.chars();
+            while let Some(character) = characters.next() {
+                match character {
+                    '"' => break,
+                    '\\' => match characters.next() {
+                        Some('n') => value.push('\n'),
+                        Some('r') => value.push('\r'),
+                        Some('t') => value.push('\t'),
+                        Some(escaped) => value.push(escaped),
+                        None => break,
+                    },
+                    other => value.push(other),
+                }
+            }
+            value
+        }
+        None => rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>(),
+    }
 }
 
 pub fn set_recording_started() {
@@ -89,6 +166,9 @@ fn publish(update: impl FnOnce(&mut State)) {
             "  \"agc\": {},\n",
             "  \"hotkey\": \"{}\",\n",
             "  \"format\": \"{}\",\n",
+            "  \"bitrate\": {},\n",
+            "  \"startup\": {},\n",
+            "  \"tray\": {},\n",
             "  \"recordings_dir\": \"{}\"\n",
             "}}\n"
         ),
@@ -102,6 +182,9 @@ fn publish(update: impl FnOnce(&mut State)) {
         settings.agc,
         escape(&settings.hotkey),
         settings.format.as_str(),
+        settings.bitrate_kbps,
+        crate::startup::is_enabled(),
+        settings.tray,
         escape(&crate::config::recordings_dir().display().to_string()),
     );
 
@@ -172,6 +255,28 @@ mod tests {
         assert_eq!(escape("back\\slash"), "back\\\\slash");
         assert_eq!(escape("line\nbreak"), "line\\nbreak");
         assert_eq!(escape("bell\u{7}"), "bell\\u0007");
+    }
+
+    #[test]
+    fn reads_back_the_fields_it_carries_over() {
+        let json = concat!(
+            "{\n",
+            "  \"recording\": false,\n",
+            "  \"last_file\": \"/home/you/a \\\"quoted\\\" name.opus\",\n",
+            "  \"last_saved_at\": 1786969327,\n",
+            "  \"agc\": true\n",
+            "}\n"
+        );
+        assert_eq!(field(json, "last_file"), "/home/you/a \"quoted\" name.opus");
+        assert_eq!(field(json, "last_saved_at"), "1786969327");
+        assert_eq!(field(json, "missing"), "");
+    }
+
+    #[test]
+    fn survives_a_state_file_that_is_not_ours() {
+        assert_eq!(field("", "last_file"), "");
+        assert_eq!(field("garbage", "last_file"), "");
+        assert_eq!(field("{\"last_file\":", "last_file"), "");
     }
 
     #[test]

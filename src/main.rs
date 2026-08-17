@@ -6,6 +6,8 @@ mod balloon;
 mod app;
 mod audio;
 mod clipboard;
+#[cfg(target_os = "linux")]
+mod command;
 mod config;
 mod folder_picker;
 mod hidden_window;
@@ -20,9 +22,9 @@ mod hypr;
 mod icon;
 mod log;
 mod notification;
+mod settings;
 #[cfg(target_os = "linux")]
 mod signals;
-mod settings;
 mod startup;
 #[cfg(target_os = "linux")]
 mod state;
@@ -44,8 +46,15 @@ fn run() {
     /// enough that the shortcut feels instant, long enough to stay idle-cheap.
     const TICK: Duration = Duration::from_millis(30);
 
+    /// Ticks between command-file checks — ~300ms, which reads as instant for a
+    /// click and costs a tenth of the syscalls of checking every tick.
+    #[cfg(target_os = "linux")]
+    const COMMAND_TICKS: u8 = 10;
+
     struct LocalRecordApp {
         app: App,
+        #[cfg(target_os = "linux")]
+        command_tick: u8,
     }
 
     impl ApplicationHandler<UserEvent> for LocalRecordApp {
@@ -55,7 +64,9 @@ fn run() {
             match event {
                 UserEvent::Menu(menu_event) => self.app.handle_menu_event(&menu_event),
                 UserEvent::Tray(tray_event) => self.app.handle_tray_event(&tray_event),
-                UserEvent::RecordingFinished(outcome) => self.app.handle_recording_finished(outcome),
+                UserEvent::RecordingFinished(outcome) => {
+                    self.app.handle_recording_finished(outcome)
+                }
             }
         }
 
@@ -83,6 +94,14 @@ fn run() {
             {
                 pump_gtk_events();
                 self.app.poll_signal_toggle();
+                // A widget's click can wait a few ticks; stat'ing the command
+                // file on every one of them would be 33 syscalls a second for
+                // a file that is almost never there.
+                self.command_tick += 1;
+                if self.command_tick >= COMMAND_TICKS {
+                    self.command_tick = 0;
+                    self.app.poll_commands();
+                }
             }
             self.app.poll_hotkey();
         }
@@ -128,7 +147,11 @@ fn run() {
         log::info(hotkey::WAYLAND_SHORTCUT_HINT);
     }
 
-    let mut handler = LocalRecordApp { app };
+    let mut handler = LocalRecordApp {
+        app,
+        #[cfg(target_os = "linux")]
+        command_tick: 0,
+    };
     let _ = event_loop.run_app(&mut handler);
 }
 

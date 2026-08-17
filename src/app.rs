@@ -78,6 +78,106 @@ impl App {
         }
     }
 
+    /// Acts on what a desktop widget queued. Every arm routes through the same
+    /// method the tray menu calls, so the menu, the panel and the state file
+    /// can never disagree about what happened. See [`crate::command`].
+    #[cfg(target_os = "linux")]
+    pub fn poll_commands(&mut self) {
+        for command in crate::command::take_pending() {
+            match command {
+                crate::command::Command::ToggleRecording => self.toggle_recording(),
+                crate::command::Command::ToggleAgc => self.toggle_agc(),
+                crate::command::Command::ToggleStartup => self.toggle_startup(),
+                crate::command::Command::ChangeFolder => self.change_recordings_folder(),
+                crate::command::Command::ChangeShortcut => self.change_hotkey(),
+                crate::command::Command::SetFormat(format) => self.set_format(format),
+                crate::command::Command::SetBitrate(kbps) => self.set_bitrate(kbps),
+                crate::command::Command::ToggleTray => self.toggle_tray(),
+                crate::command::Command::Quit => std::process::exit(0),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_format(&mut self, format: crate::settings::OutputFormat) {
+        match Settings::set_format(format) {
+            Ok(()) => {
+                crate::state::refresh();
+                let msg = format!(
+                    "Recording format set to {}{}",
+                    format.as_str().to_uppercase(),
+                    self.next_recording_suffix()
+                );
+                self.tray.notify(&msg, false);
+                log::info(&msg);
+            }
+            Err(err) => {
+                log::error(&format!("Failed to save format: {err}"));
+                self.tray
+                    .notify("Could not save the recording format", false);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_bitrate(&mut self, kbps: u32) {
+        match Settings::set_bitrate(kbps) {
+            Ok(()) => {
+                crate::state::refresh();
+                let msg = format!(
+                    "Bitrate set to {} kbps{}",
+                    Settings::load().bitrate_kbps,
+                    self.next_recording_suffix()
+                );
+                self.tray.notify(&msg, false);
+                log::info(&msg);
+            }
+            Err(err) => {
+                log::error(&format!("Failed to save bitrate: {err}"));
+                self.tray.notify("Could not save the bitrate", false);
+            }
+        }
+    }
+
+    /// Hiding the icon only makes sense where something else can reach the app,
+    /// so the message names what is left driving it.
+    #[cfg(target_os = "linux")]
+    fn toggle_tray(&mut self) {
+        match Settings::toggle_tray() {
+            Ok(visible) => {
+                if let Err(err) = self.tray.set_visible(visible) {
+                    log::error(&err);
+                }
+                crate::state::refresh();
+                let msg = if visible {
+                    "Tray icon shown".to_string()
+                } else {
+                    format!("Tray icon hidden — {} still works", Settings::load().hotkey)
+                };
+                self.tray.notify(&msg, false);
+                log::info(&msg);
+            }
+            Err(err) => {
+                log::error(&format!("Failed to save tray setting: {err}"));
+                self.tray
+                    .notify("Could not update the tray icon setting", false);
+            }
+        }
+    }
+
+    /// The encoder reads both settings once, when a recording starts.
+    #[cfg(target_os = "linux")]
+    fn next_recording_suffix(&self) -> &'static str {
+        if matches!(
+            self.state,
+            AppState::Recording { .. } | AppState::Finalizing
+        ) {
+            " (applies to the next recording)"
+        } else {
+            ""
+        }
+    }
+
     pub fn handle_menu_event(&mut self, event: &tray_icon::menu::MenuEvent) {
         if let Some(action) = self.tray.handle_menu_event(event) {
             self.handle_tray_action(action);
@@ -279,6 +379,8 @@ impl App {
             Ok(()) => {
                 let enabled = startup::is_enabled();
                 self.tray.set_startup_checked(enabled);
+                #[cfg(target_os = "linux")]
+                crate::state::refresh();
                 let msg = if enabled {
                     startup_enabled_message()
                 } else {

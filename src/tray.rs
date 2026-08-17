@@ -29,6 +29,10 @@ pub struct TrayController {
     hotkey_item: MenuItem,
     hotkey_label: String,
     shortcut_supported: bool,
+    /// Whether the icon should be in the tray at all. The icon is always built,
+    /// so this is a `set_visible` away either direction — rebuilding one at
+    /// runtime would mean re-registering with the desktop's tray host.
+    visible: bool,
 }
 
 impl TrayController {
@@ -36,8 +40,12 @@ impl TrayController {
         let start_item = MenuItem::with_id(MENU_START, "Start recording", true, None);
         let stop_item = MenuItem::with_id(MENU_STOP, "Stop recording", recording, None);
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
-        let change_folder_item =
-            MenuItem::with_id(MENU_CHANGE_FOLDER, "Change recordings folder...", true, None);
+        let change_folder_item = MenuItem::with_id(
+            MENU_CHANGE_FOLDER,
+            "Change recordings folder...",
+            true,
+            None,
+        );
         // A Wayland session cannot deliver the X11-grabbed shortcut, and where
         // no compositor binding can stand in for it the picker would happily
         // save a shortcut that never fires. Grey it out rather than offer a
@@ -79,12 +87,25 @@ impl TrayController {
         ])
         .map_err(|e| e.to_string())?;
 
+        // Honoured on Linux only: elsewhere the tray icon is the whole
+        // interface, and hiding it would leave a running app with no way to
+        // reach it but the shortcut.
+        let visible = if cfg!(target_os = "linux") {
+            Settings::load().tray
+        } else {
+            true
+        };
+
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_tooltip(&format!("LocalRecord ({hotkey_label})"))
             .with_icon(icon::tray_icon(recording))
             .build()
             .map_err(|e| e.to_string())?;
+
+        if !visible {
+            let _ = tray.set_visible(false);
+        }
 
         Ok(Self {
             tray,
@@ -95,6 +116,7 @@ impl TrayController {
             hotkey_item,
             hotkey_label: hotkey_label.to_string(),
             shortcut_supported,
+            visible,
         })
     }
 
@@ -124,6 +146,11 @@ impl TrayController {
         #[cfg(windows)]
         {
             crate::balloon::invalidate_tray_target();
+        }
+        // A hidden icon has nothing to repair, and the hide-then-show below
+        // would put it back in the tray.
+        if !self.visible {
+            return Ok(());
         }
         self.tray
             .set_visible(false)
@@ -201,6 +228,15 @@ impl TrayController {
 
     pub fn set_agc_checked(&mut self, enabled: bool) {
         let _ = self.agc_item.set_checked(enabled);
+    }
+
+    /// Shows or hides the icon. The menu stays wired up either way, so a later
+    /// show needs no rebuild.
+    pub fn set_visible(&mut self, visible: bool) -> Result<(), String> {
+        self.visible = visible;
+        self.tray
+            .set_visible(visible)
+            .map_err(|e| format!("Failed to update tray icon visibility: {e}"))
     }
 }
 
