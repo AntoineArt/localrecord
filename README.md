@@ -280,7 +280,7 @@ interface.
 ### Omarchy bar widget
 
 [localrecord-omarchy-plugin](https://github.com/AntoineArt/localrecord-omarchy-plugin)
-puts all of that in the Omarchy bar — a microphone glyph, a red REC dot with a
+puts all of that in the Omarchy bar — a waveform glyph, a red REC dot with a
 running clock while recording, and a panel holding every setting, the last
 recording, and the switch that hides the tray icon:
 
