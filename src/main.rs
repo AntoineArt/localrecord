@@ -24,6 +24,8 @@ mod notification;
 mod signals;
 mod settings;
 mod startup;
+#[cfg(target_os = "linux")]
+mod state;
 mod tray;
 
 fn main() {

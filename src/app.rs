@@ -47,6 +47,8 @@ impl App {
         startup::ensure_enabled();
         let hotkeys = HotkeyManager::from_settings()?;
         let hotkey_label = hotkeys.label();
+        #[cfg(target_os = "linux")]
+        crate::state::init();
 
         Ok(Self {
             tray: TrayController::new(false, &hotkey_label)?,
@@ -64,11 +66,15 @@ impl App {
     }
 
     /// Toggle on SIGUSR1, which is how a Wayland compositor reaches us — the
-    /// X11 key grab behind `poll_hotkey` never fires there. See [`crate::signals`].
+    /// X11 key grab behind `poll_hotkey` never fires there. SIGUSR2 flips
+    /// auto-levelling, for desktop widgets. See [`crate::signals`].
     #[cfg(target_os = "linux")]
     pub fn poll_signal_toggle(&mut self) {
         if crate::signals::take_toggle_request() {
             self.toggle_recording();
+        }
+        if crate::signals::take_agc_toggle_request() {
+            self.toggle_agc();
         }
     }
 
@@ -86,6 +92,12 @@ impl App {
 
     pub fn handle_recording_finished(&mut self, outcome: RecordingFinishedOutcome) {
         self.state = AppState::Idle;
+
+        #[cfg(target_os = "linux")]
+        crate::state::set_recording_finished(match &outcome {
+            RecordingFinishedOutcome::Saved { path, .. } => Some(path.as_path()),
+            _ => None,
+        });
 
         match outcome {
             RecordingFinishedOutcome::Saved { path, clipboard_ok } => {
@@ -168,6 +180,8 @@ impl App {
                     self.hotkeys.drain_pending_events();
                     let label = self.hotkeys.label();
                     let _ = self.tray.set_hotkey_label(&label);
+                    #[cfg(target_os = "linux")]
+                    crate::state::refresh();
                     let msg = format!("Shortcut changed to {label}");
                     self.tray.notify(&msg, false);
                     log::info(&msg);
@@ -204,6 +218,7 @@ impl App {
         // started later picks up the same key. Failure here changes nothing.
         let _ = self.hotkeys.replace(new_binding);
         let _ = self.tray.set_hotkey_label(new_binding);
+        crate::state::refresh();
 
         let mut msg = format!("Shortcut changed to {new_binding}");
         let conflicts = crate::hypr::manual_binding_conflicts();
@@ -238,6 +253,8 @@ impl App {
             }
             Some(path) => match Settings::set_recordings_dir(path.clone()) {
                 Ok(()) => {
+                    #[cfg(target_os = "linux")]
+                    crate::state::refresh();
                     let msg = format!("Recordings will be saved to {}", path.display());
                     self.tray.notify(&msg, false);
                     log::info(&msg);
@@ -283,6 +300,8 @@ impl App {
         match Settings::toggle_agc() {
             Ok(enabled) => {
                 self.tray.set_agc_checked(enabled);
+                #[cfg(target_os = "linux")]
+                crate::state::refresh();
                 let msg = if enabled {
                     "Auto-levelling enabled"
                 } else {
@@ -323,6 +342,8 @@ impl App {
             Ok(recorder) => {
                 let _ = self.tray.set_recording(true);
                 self.state = AppState::Recording { recorder };
+                #[cfg(target_os = "linux")]
+                crate::state::set_recording_started();
                 log::info("Recording started");
             }
             Err(err) => {

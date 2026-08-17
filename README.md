@@ -209,6 +209,54 @@ On every other Wayland session the entry is greyed out and reads *"Change
 shortcut (unavailable on Wayland)"*, since anything set there would be
 registered and never fire. Change the compositor binding above instead.
 
+## Desktop integration (Linux)
+
+The tray icon is all LocalRecord shows on Linux, and that backend has no click
+action — right-clicking for a menu is the only thing it offers. So the app also
+publishes what it is doing, and takes instructions on signals, for anything that
+wants to do better: a bar widget, a status script, a keybinding.
+
+**Reading.** `~/.local/share/localrecord/state.json`, rewritten on every change
+and renamed into place, so a reader never catches a half-written one:
+
+```json
+{
+  "version": 1,
+  "pid": 4242,
+  "exe": "/usr/local/bin/localrecord",
+  "recording": true,
+  "started_at": 1786969263,
+  "last_file": "/home/you/.local/share/localrecord/recordings/recording_2026-08-17_14-21-03.opus",
+  "last_saved_at": 1786969327,
+  "agc": true,
+  "hotkey": "Ctrl+Shift+R",
+  "format": "opus",
+  "recordings_dir": "/home/you/.local/share/localrecord/recordings"
+}
+```
+
+`pid` is there to be checked: nothing else distinguishes a crashed app from an
+idle one.
+
+**Writing.** Signals, so nothing has to edit the settings file behind the app's
+back and leave its tray menu stale:
+
+```bash
+pkill -USR1 -x localrecord   # start/stop recording
+pkill -USR2 -x localrecord   # toggle auto-levelling
+```
+
+### Omarchy bar widget
+
+[localrecord-omarchy-plugin](https://github.com/AntoineArt/localrecord-omarchy-plugin)
+puts all of that in the Omarchy bar — a microphone glyph, a red REC dot with a
+running clock while recording, and a popup with the tray menu's controls and the
+last recording:
+
+```bash
+omarchy plugin add https://github.com/AntoineArt/localrecord-omarchy-plugin.git --enable
+```
+
 ## Tray menu
 
 | Item | Action |
