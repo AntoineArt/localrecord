@@ -285,6 +285,10 @@ recording, and the switch that hides the tray icon:
 omarchy plugin add https://github.com/AntoineArt/localrecord-omarchy-plugin.git --enable
 ```
 
+The plugin cannot install this app for you — `omarchy plugin add` runs no plugin
+code by design — but its panel offers a one-click **Install LocalRecord** that
+pulls the latest release binary into `~/.local/bin`, without sudo.
+
 ## Tray menu
 
 | Item | Action |
