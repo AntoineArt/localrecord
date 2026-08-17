@@ -1,40 +1,116 @@
 ---
-description: Full release pipeline when the user says RELEASE
+description: What a LocalRecord change must propagate to, and the full RELEASE pipeline
 alwaysApply: true
 ---
 
-# RELEASE Pipeline
+# LocalRecord is three repos
 
-When the user says **RELEASE** (or asks to build and release), run the full pipeline without skipping steps.
+A change to the app is rarely finished inside this repo. Two other repos consume
+it, neither of them in this working tree, and both go stale silently — nothing
+fails, the plugin just quietly stops matching the app and the site keeps
+describing an older version.
 
-## 1. App repo (`localrecord`)
+| Repo | Path here | What it is |
+|------|-----------|------------|
+| App | `~/Work/localrecord` | This one. Rust tray app, Windows + Linux. |
+| Landing | `~/Work/localrecord-landing` | Static site → https://localrecord.doublea.engineering |
+| Omarchy plugin | `~/.config/omarchy/plugins/doublea.localrecord` | Quickshell bar widget. Its checkout *is* the installed plugin. |
 
-1. Ensure all code changes are complete and `cargo check --target x86_64-pc-windows-gnu` passes (or rely on CI if cross-compile unavailable locally).
-2. Bump `version` in `Cargo.toml` (patch unless user specifies otherwise).
-3. Update `README.md` if user-facing behavior changed.
+Remotes: `AntoineArt/localrecord`, `AntoineArt/localrecord-landing`,
+`AntoineArt/localrecord-omarchy-plugin`.
+
+## What triggers what
+
+Check this before calling any app change done. When a row applies, do that work
+in the same session — do not leave it as a follow-up.
+
+| Change in the app | Landing | Plugin |
+|---|---|---|
+| New or changed user-facing feature | Update the copy that describes it | Surface it in the panel if it is a setting |
+| A field added to `state.json` | — | Read it in `Service.qml`, show it if it is user-facing |
+| A verb added to the command file | — | Offer it in the panel |
+| A field or verb **renamed or removed** | — | **Breaking.** Update the plugin and raise its version floor |
+| A setting added to `settings.ini` | Only if documented there | Add a row to the panel — the panel is meant to hold every setting |
+| Install steps, requirements, platform support | Update `index.html` | Update the install section of its README |
+| Version bump alone | Nothing (the site reads the GitHub API) | Nothing |
+
+The plugin's README names the app version it needs. Raise that floor whenever the
+plugin starts relying on something new, and say so in the app's release notes.
+
+## The coupling, concretely
+
+The plugin never imports app code. It talks through two files, and those are the
+contract to keep honest:
+
+- **`~/.local/share/localrecord/state.json`** — written by `src/state.rs` on
+  every change, read by the plugin's `Service.qml`. Renamed into place; carries
+  `pid` so a reader can tell a crashed app from an idle one.
+- **`~/.local/share/localrecord/command`** — written by the plugin, read by
+  `src/command.rs`. One verb per line; values allowed. Every verb must route
+  through the same `App` method the tray menu calls, so the menu, the state file
+  and the widget cannot disagree.
+
+Signals (`SIGUSR1` record, `SIGUSR2` auto-levelling) stay the channel for
+compositor bindings. Keep them working.
+
+## RELEASE pipeline
+
+When the user says **RELEASE** (or asks to build and release), run every step.
+
+### 1. App
+
+1. Code complete; `cargo test` (two `audio::mixer` tests fail on `main` and have
+   for a while — that is the baseline, not your regression) and `cargo build
+   --release` clean. `cargo fmt` reformats files nobody touched: revert those, or
+   the diff drowns the change.
+2. Bump `version` in `Cargo.toml` (patch unless told otherwise) — this also
+   touches `Cargo.lock`.
+3. Update `README.md` if user-facing behaviour changed.
 4. Commit and push to `main`.
-5. Create and push an annotated tag: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
-6. Wait for `.github/workflows/release.yml` to finish (Windows build + GitHub Release upload).
-7. Edit the GitHub release notes with a short changelog (fixes/features since last tag).
+5. `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
+6. Wait for `.github/workflows/release.yml` (Windows + Linux build, uploads to a
+   GitHub Release).
+7. Write the release notes: what changed and why, not a commit list.
 
-## 2. Landing page (`localrecord-landing`)
+### 2. Plugin, if the table above says so
 
-1. Update `index.html` copy if features or install steps changed.
-2. Download links use `release.js` + GitHub API — no manual version strings in hrefs.
-3. Commit and push to `main`.
-4. Deploy: `vercel --prod --yes` from the landing repo.
-5. Point custom domain: `vercel alias set <deployment-url> localrecord.doublea.engineering`
+1. Edit in `~/.config/omarchy/plugins/doublea.localrecord` — saving there is
+   what the running shell loads, so it is also the test bench.
+2. `omarchy plugin validate .` after touching `manifest.json`.
+3. Bump `version` in `manifest.json`, update its README, commit, push, and cut a
+   GitHub release for the tag.
+4. Its testing and portability rules live in that repo's `CLAUDE.md`. Read it —
+   in particular, the working tree carries a deliberate local-only edit that must
+   not be published.
 
-## 3. Verify
+### 3. Landing, if the table above says so
 
-- Latest release: `gh release list -R AntoineArt/localrecord --limit 1`
-- Asset present: `localrecord-X.Y.Z.exe` and `localrecord-X.Y.Z-x86_64-linux` on the new tag
-- Site live: https://localrecord.doublea.engineering shows updated version via `release.js`
+1. Update `index.html` copy. Download links resolve through `release.js` + the
+   GitHub API: never hardcode a version in an href.
+2. Commit and push to `main`. **Vercel's git integration deploys production on
+   push** — no `vercel --prod` needed.
+3. The custom domain does not follow automatically. Point it at the new
+   deployment, or the site keeps serving the previous one:
+   ```bash
+   npx vercel ls localrecord-landing          # newest Production URL
+   npx vercel alias set <deployment-url> localrecord.doublea.engineering
+   ```
+   The CLI may report `Logged out` on its very first `npx` run and work on the
+   second — check before concluding the user must log in.
 
-## Repos
+### 4. Verify, with commands not assumptions
 
-| Repo | URL |
-|------|-----|
-| App | https://github.com/AntoineArt/localrecord |
-| Landing | https://github.com/AntoineArt/localrecord-landing |
-| Site | https://localrecord.doublea.engineering |
+```bash
+gh release list -R AntoineArt/localrecord --limit 1
+gh release view vX.Y.Z --json assets --jq '.assets[].name'   # both .exe and -x86_64-linux
+curl -s https://localrecord.doublea.engineering/ | grep -c "<a phrase you just added>"
+omarchy-shell doublea.localrecord status                     # the widget answers
+```
+
+## Working on this machine
+
+The user runs Hyprland on Omarchy 4 with the Lua config parser, three monitors,
+and no microphone plugged in — recordings that capture nothing are expected, not
+a bug. Their LocalRecord runs from `~/Work/localrecord/target/release/localrecord`,
+so restart that after building. Their shortcut is set through the tray's picker,
+which writes `~/.config/hypr/localrecord.lua`.
