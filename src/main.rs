@@ -30,8 +30,41 @@ mod startup;
 mod state;
 mod tray;
 
+/// The version this binary was built from, so a shell, a script or the bar
+/// widget can ask rather than infer it from a file date.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
+    if wants_version() {
+        report_version();
+        return;
+    }
     run();
+}
+
+/// Checked before anything else: asking a binary its version should never
+/// start an app, take the single-instance lock, or need a display.
+fn wants_version() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+}
+
+#[cfg(windows)]
+fn report_version() {
+    // The release binary is a windows-subsystem app, so it owns no console and
+    // `println!` would write into nothing. Borrow the console of whatever shell
+    // invoked us. This runs before any other output, so the stdout handle is
+    // resolved after the attach rather than cached from before it.
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    println!("localrecord {VERSION}");
+}
+
+#[cfg(not(windows))]
+fn report_version() {
+    println!("localrecord {VERSION}");
 }
 
 fn run() {

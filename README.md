@@ -110,6 +110,18 @@ recordings_dir=D:\My Recordings
 
 Use `format=wav` for uncompressed WAV (paste-as-audio in Audacity). Use `bitrate=32`–`128` for Opus quality (default `64`). Use `agc=off` to record raw levels (see [Auto-levelling](#auto-levelling-agc)).
 
+To find out which version you are running, ask the binary — it prints and exits
+without starting the app or disturbing a copy already running:
+
+```console
+$ localrecord --version
+localrecord 1.3.2
+```
+
+On Windows the app is a windowed binary with no console of its own, so it
+writes into the console of the shell that invoked it: run it from `cmd` or
+PowerShell and the line appears there.
+
 ## Auto-levelling (AGC)
 
 **On by default.** Set `agc=off` in settings, or untick **Auto-level mic and desktop audio** in the tray menu, to record raw levels instead.
@@ -222,6 +234,7 @@ and renamed into place, so a reader never catches a half-written one:
 ```json
 {
   "version": 1,
+  "app_version": "1.3.2",
   "pid": 4242,
   "exe": "/usr/local/bin/localrecord",
   "recording": true,
@@ -239,7 +252,11 @@ and renamed into place, so a reader never catches a half-written one:
 ```
 
 `pid` is there to be checked: nothing else distinguishes a crashed app from an
-idle one.
+idle one. The two version fields answer different questions: `version` is the
+schema of this file, bumped only when its shape changes, while `app_version` is
+the release the running app was built from — a reader that needs a feature
+added in some version can test for it rather than assume. It first appears in
+1.3.2; treat its absence as "older than that".
 
 **Writing.** Two channels, so nothing has to edit the settings file behind the
 app's back and leave its tray menu stale.

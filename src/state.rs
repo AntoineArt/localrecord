@@ -20,6 +20,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::settings::Settings;
 
+/// Schema version of `state.json` itself — bumped when the shape changes, not
+/// when the app is released. The app's own version travels as `app_version`.
 const VERSION: u32 = 1;
 
 #[derive(Default)]
@@ -157,6 +159,7 @@ fn publish(update: impl FnOnce(&mut State)) {
         concat!(
             "{{\n",
             "  \"version\": {},\n",
+            "  \"app_version\": \"{}\",\n",
             "  \"pid\": {},\n",
             "  \"exe\": \"{}\",\n",
             "  \"recording\": {},\n",
@@ -173,6 +176,7 @@ fn publish(update: impl FnOnce(&mut State)) {
             "}}\n"
         ),
         VERSION,
+        crate::VERSION,
         std::process::id(),
         escape(&exe_path()),
         state.recording,
@@ -270,6 +274,22 @@ mod tests {
         assert_eq!(field(json, "last_file"), "/home/you/a \"quoted\" name.opus");
         assert_eq!(field(json, "last_saved_at"), "1786969327");
         assert_eq!(field(json, "missing"), "");
+    }
+
+    #[test]
+    fn the_schema_version_and_the_app_version_stay_distinct() {
+        let json = concat!(
+            "{\n",
+            "  \"version\": 1,\n",
+            "  \"app_version\": \"1.3.2\",\n",
+            "  \"pid\": 4242\n",
+            "}\n"
+        );
+        // A reader asking for one must never be handed the other, which is the
+        // trap in matching field names by substring.
+        assert_eq!(field(json, "version"), "1");
+        assert_eq!(field(json, "app_version"), "1.3.2");
+        assert!(!crate::VERSION.is_empty());
     }
 
     #[test]
