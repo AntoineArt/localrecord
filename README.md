@@ -363,9 +363,10 @@ Same core approach as OBS on Windows:
 
 1. **Desktop audio** — PulseAudio/PipeWire monitor source (`@DEFAULT_MONITOR@`)
 2. **Microphone** — default input source (`@DEFAULT_SOURCE@`)
-3. **Auto-level** — each stream levelled independently towards −20 dBFS RMS (unless `agc=off`)
-4. **Mix** — both streams mixed to 48 kHz stereo in software, then soft-limited at −1 dBFS
-5. **Output** — same Opus/WAV pipeline as Windows; clipboard gets the file path
+3. **Fragment size** — both streams request 10 ms fragments explicitly; the server default is large enough (~300 ms) that the two streams arrive in alternating bursts the mixer cannot pair
+4. **Auto-level** — each stream levelled independently towards −20 dBFS RMS (unless `agc=off`)
+5. **Mix** — both streams mixed to 48 kHz stereo in software, then soft-limited at −1 dBFS
+6. **Output** — same Opus/WAV pipeline as Windows; clipboard gets the file path
 
 ## Limitations
 

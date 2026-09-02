@@ -15,15 +15,25 @@ pub struct Mixer {
     mic_agc: Option<Agc>,
 }
 
-/// ~100 ms of stereo samples at 48 kHz (4800 frames × 2 channels).
-const MAX_DRIFT_SAMPLES: usize = 4800 * 2;
+/// ~500 ms of stereo samples at 48 kHz (24000 frames × 2 channels): the
+/// pairing window. Queues within this of each other still pair; only samples
+/// beyond it are treated as unrecoverable drift and dropped. Sized to cover a
+/// whole PulseAudio fragment (up to ~370 ms with server-default buffer
+/// attributes), so bursty delivery is absorbed instead of trimmed.
+const MAX_DRIFT_SAMPLES: usize = 24_000 * 2;
 
-/// One 10 ms WASAPI chunk at 48 kHz stereo (480 frames × 2 channels).
+/// One 10 ms capture chunk at 48 kHz stereo (480 frames × 2 channels).
+#[cfg(test)]
 const CAPTURE_CHUNK_SAMPLES: usize = 480 * 2;
 
-/// Wait for ~2 capture chunks before writing loopback without mic, so a mic
-/// chunk for the same window is mixed instead of duplicated on a later pass.
-const LOOPBACK_SOLO_WAIT_SAMPLES: usize = CAPTURE_CHUNK_SAMPLES * 2;
+/// While the other stream's queue is empty, hold this many samples back
+/// instead of writing them unpaired. An empty peer queue usually means its
+/// next chunk is merely late — bursty fragment delivery, thread scheduling —
+/// not that the stream is idle. Writing solo audio that should have been
+/// paired inserts the peer's window twice and stretches the timeline (the
+/// 1.57x-length recordings with silence stutters every few hundred ms).
+/// Matches the pairing window: anything older could not pair anyway.
+const SOLO_RESERVE_SAMPLES: usize = MAX_DRIFT_SAMPLES;
 
 impl Mixer {
     pub fn new(loopback_gain: f32, mic_gain: f32) -> Self {
@@ -110,19 +120,11 @@ impl Mixer {
             self.push_mixed_frame(true, true);
         }
 
-        while self.loopback.is_empty() && self.mic.len() >= 2 {
+        let solo_threshold = if flush { 2 } else { SOLO_RESERVE_SAMPLES + 2 };
+        while self.loopback.is_empty() && self.mic.len() >= solo_threshold {
             self.push_mixed_frame(false, true);
         }
-
-        let loopback_solo_threshold = if flush {
-            2
-        } else {
-            LOOPBACK_SOLO_WAIT_SAMPLES
-        };
-        while self.mic.is_empty() && self.loopback.len() >= loopback_solo_threshold {
-            if self.loopback.len() < 2 {
-                break;
-            }
+        while self.mic.is_empty() && self.loopback.len() >= solo_threshold {
             self.push_mixed_frame(true, false);
         }
     }
@@ -260,7 +262,34 @@ mod tests {
         mixer.push_mic(&[0.0, 0.0]);
 
         let out = mixer.finish();
-        assert_eq!(out.len(), 2);
+        // Only the part beyond the pairing window is dropped; the rest is
+        // kept and flushed (2 paired + MAX_DRIFT_SAMPLES solo).
+        assert_eq!(out.len(), MAX_DRIFT_SAMPLES + 2);
+    }
+
+    #[test]
+    fn bursty_fragment_delivery_does_not_stretch_the_timeline() {
+        // PulseAudio with server-default buffer attributes delivers each
+        // stream in ~300 ms fragments, out of phase with the other stream.
+        // Both fragments cover the same wall-clock window, so the mixed
+        // output must be one window long, not two back to back.
+        let frag_chunks = 30; // 300 ms
+        let loud = vec![0.2; CAPTURE_CHUNK_SAMPLES];
+        let quiet = vec![0.0; CAPTURE_CHUNK_SAMPLES];
+        let mut mixer = Mixer::new(1.0, 1.0);
+        for _ in 0..20 {
+            for _ in 0..frag_chunks {
+                mixer.push_loopback(&loud);
+            }
+            mixer.process(false);
+            for _ in 0..frag_chunks {
+                mixer.push_mic(&quiet);
+            }
+            mixer.process(false);
+        }
+
+        let out = mixer.finish();
+        assert_eq!(out.len(), 20 * frag_chunks * CAPTURE_CHUNK_SAMPLES);
     }
 
     #[test]
@@ -323,6 +352,6 @@ mod tests {
 
         let out = mixer.finish();
         assert_eq!(out.len(), CAPTURE_CHUNK_SAMPLES);
-        assert!((out[0] - 0.625).abs() < f32::EPSILON);
+        assert!((out[0] - 0.75).abs() < f32::EPSILON);
     }
 }

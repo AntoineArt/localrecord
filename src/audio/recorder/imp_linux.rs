@@ -130,6 +130,20 @@ fn capture_pulse(
         return Err("Invalid PulseAudio sample spec".to_string());
     }
 
+    // Without explicit buffer attributes the server picks the fragment size,
+    // and its default is huge (up to ~370 ms): each stream then arrives in
+    // large bursts, the two mixer queues are almost never filled at the same
+    // time, and the mixer writes both streams sequentially instead of mixed —
+    // recordings come out ~1.6x too long with a stutter at every fragment
+    // boundary. Ask for 10 ms fragments so delivery matches the chunk size.
+    let attr = pulse::def::BufferAttr {
+        maxlength: (CHUNK_BYTES * 8) as u32,
+        tlength: u32::MAX,
+        prebuf: u32::MAX,
+        minreq: u32::MAX,
+        fragsize: CHUNK_BYTES as u32,
+    };
+
     let simple = psimple::Simple::new(
         None,
         "localrecord",
@@ -138,7 +152,7 @@ fn capture_pulse(
         stream_name,
         &spec,
         None,
-        None,
+        Some(&attr),
     )
     .map_err(|e| format!("PulseAudio open failed for {device}: {e}"))?;
 
