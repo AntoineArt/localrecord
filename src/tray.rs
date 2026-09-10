@@ -37,6 +37,7 @@ pub struct TrayController {
 
 impl TrayController {
     pub fn new(recording: bool, hotkey_label: &str) -> Result<Self, String> {
+        let version_item = MenuItem::new(format!("LocalRecord {}", crate::VERSION), false, None);
         let start_item = MenuItem::with_id(MENU_START, "Start recording", true, None);
         let stop_item = MenuItem::with_id(MENU_STOP, "Stop recording", recording, None);
         let open_item = MenuItem::with_id(MENU_OPEN, "Open recordings folder", true, None);
@@ -66,7 +67,7 @@ impl TrayController {
         );
         let agc_item = CheckMenuItem::with_id(
             MENU_AGC,
-            "Auto-level mic and desktop audio",
+            "Auto-level desktop audio",
             true,
             Settings::load().agc,
             None,
@@ -74,6 +75,8 @@ impl TrayController {
         let exit_item = MenuItem::with_id(MENU_EXIT, "Exit", true, None);
 
         let menu = Menu::with_items(&[
+            &version_item,
+            &PredefinedMenuItem::separator(),
             &start_item,
             &stop_item,
             &PredefinedMenuItem::separator(),
@@ -98,7 +101,7 @@ impl TrayController {
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip(&format!("LocalRecord ({hotkey_label})"))
+            .with_tooltip(&format!("LocalRecord {} ({hotkey_label})", crate::VERSION))
             .with_icon(icon::tray_icon(recording))
             .build()
             .map_err(|e| e.to_string())?;
@@ -174,9 +177,9 @@ impl TrayController {
 
     fn update_tooltip(&self, recording: bool) -> Result<(), String> {
         let tooltip = if recording {
-            "LocalRecord: recording...".to_string()
+            format!("LocalRecord {}: recording...", crate::VERSION)
         } else {
-            format!("LocalRecord ({})", self.hotkey_label)
+            format!("LocalRecord {} ({})", crate::VERSION, self.hotkey_label)
         };
         self.tray
             .set_tooltip(Some(truncate_tooltip(&tooltip)))

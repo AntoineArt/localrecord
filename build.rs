@@ -11,9 +11,9 @@ fn main() {
     let mut res = winres::WindowsResource::new();
     res.set_icon("assets/icon.ico");
     res.set("ProductName", "LocalRecord");
-    // Shown as the session name in the Windows volume mixer, so keep it short
-    // and recognizable rather than a full description of the app.
-    res.set("FileDescription", "LocalRecord");
+    // Task Manager and the volume mixer show the executable description.
+    let version = std::env::var("CARGO_PKG_VERSION").expect("package version");
+    res.set("FileDescription", &format!("LocalRecord {version}"));
     res.set("CompanyName", "LocalRecord");
     res.set("LegalCopyright", "Copyright (C) LocalRecord");
     res.set("OriginalFilename", "localrecord.exe");

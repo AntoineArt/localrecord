@@ -59,18 +59,18 @@ When the user says **RELEASE** (or asks to build and release), run every step.
 
 ### 1. App
 
-1. Code complete; `cargo test` (two `audio::mixer` tests fail on `main` and have
-   for a while — that is the baseline, not your regression) and `cargo build
-   --release` clean. `cargo fmt` reformats files nobody touched: revert those, or
+1. Code complete; `cargo test --locked` and `cargo build --release --locked`
+   clean. The release workflow runs both on Windows and Linux before uploading. `cargo fmt` reformats files nobody touched: revert those, or
    the diff drowns the change.
 2. Bump `version` in `Cargo.toml` (patch unless told otherwise) — this also
    touches `Cargo.lock`.
 3. Update `README.md` if user-facing behaviour changed.
 4. Commit and push to `main`.
 5. `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
-6. Wait for `.github/workflows/release.yml` (Windows + Linux build, uploads to a
-   GitHub Release).
-7. Write the release notes: what changed and why, not a commit list.
+6. Wait for `.github/workflows/release.yml` (Windows + Linux tests and build,
+   uploads to a draft GitHub Release).
+7. Write the release notes: what changed and why, not a commit list. Publish the
+   draft only once both jobs pass and both platform assets are present.
 
 ### 2. Plugin, if the table above says so
 

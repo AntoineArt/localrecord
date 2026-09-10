@@ -17,7 +17,7 @@ Quick recordings without opening a full DAW or OBS. One hotkey toggles capture o
 ## Features
 
 - **Dual capture** — desktop audio (WASAPI loopback on Windows, PulseAudio/PipeWire on Linux) plus microphone, mixed to one file
-- **Auto-levelling (AGC)** — each source is levelled independently so a quiet mic is not buried under loud desktop audio
+- **Auto-levelling (AGC)** — desktop audio is levelled automatically; the microphone keeps a fixed gain to avoid amplifying hiss during pauses
 - **Compact Opus output** — default `.opus` format (~30 MB/hour at 64 kbps vs ~660 MB/hour WAV)
 - **Global hotkey** — default `Ctrl+Shift+R`, customizable from the tray menu
 - **System tray** — start/stop, open or change recordings folder, change shortcut, auto-levelling and startup toggles
@@ -115,50 +115,35 @@ without starting the app or disturbing a copy already running:
 
 ```console
 $ localrecord --version
-localrecord 1.3.2
+localrecord 1.3.3
 ```
 
 On Windows the app is a windowed binary with no console of its own, so it
 writes into the console of the shell that invoked it: run it from `cmd` or
 PowerShell and the line appears there.
 
+The tray menu and tooltip show the running app version. On Windows, Task Manager's process description shows `LocalRecord 1.3.3`; release executable filenames also include the version. On Linux, the short process name is `localrec-1.3.3` (within the system's 15-byte limit), even when the executable is installed as `localrecord`. The Omarchy panel shows the running app version in its heading and its own plugin version separately.
+
+When upgrading to 1.3.3, app-managed Hyprland shortcuts are migrated automatically. For hand-written bindings, use the process selector shown below; an exact `pkill -x localrecord` no longer matches the new Linux task name. Update the Omarchy plugin to **1.3.3 or newer** so it recognizes the versioned process.
+
 ## Auto-levelling (AGC)
 
-**On by default.** Set `agc=off` in settings, or untick **Auto-level mic and desktop audio** in the tray menu, to record raw levels instead.
+**On by default.** Set `agc=off` in settings, or untick **Auto-level desktop audio** in the tray menu, to record raw levels instead.
 
-### The problem it solves
+The microphone always uses a fixed gain (0.85× the captured level). It is never automatically boosted during pauses, including with existing `agc=on` settings. This prevents microphone hiss from swelling while other people speak. Microphone input level remains controlled by your device and operating system.
 
-LocalRecord writes what the operating system hands it, and the two sources are levelled by completely separate things:
-
-- your **microphone** level comes from the device's analog gain and the Windows input slider
-- your **desktop audio** level comes from the system output volume and the per-app volume sliders of whatever is playing
-
-Nothing keeps those in step, so the two routinely arrive tens of dB apart — one source inaudible under the other, or the whole recording too quiet to use.
-
-This is easy to miss because video conferencing apps hide it: Discord, Meet, Teams and anything else built on WebRTC run their own AGC with up to ~30 dB of gain. A microphone that sounds perfectly fine in a call can still be 40 dB below where a recording needs it. LocalRecord is often the first thing to show you the raw signal.
-
-### What it does
-
-One independent AGC per source, applied before the mix:
+AGC applies only to desktop audio, before mixing:
 
 | | |
 |---|---|
-| Target | −20 dBFS RMS per source |
-| Gain range | −20 dB to +30 dB (loud sources are pulled down as well as quiet ones pushed up) |
+| Target | −20 dBFS RMS |
+| Gain range | −20 dB to +30 dB |
 | Noise gate | −55 dBFS — below this the gain is held, not raised |
 | Response | fast when turning down (~50 ms), slow when turning up (~2 s) |
 
-Both channels of a source always receive the same gain, so the stereo image is preserved. The summed mix then passes through a soft saturator at −1 dBFS, so the extra level cannot clip the output.
+Both desktop channels receive the same gain to preserve stereo balance. The summed mix passes through a soft saturator at −1 dBFS to keep peaks within full scale.
 
-The gate matters more than it looks: without it the AGC would wind up to maximum gain during every silence and amplify room noise. It also protects the desktop stream, which is *digital silence* when nothing is playing — an ungated AGC would sit at +30 dB and detonate on the first sound.
-
-### What it costs
-
-- **Noise comes up with the signal.** Boosting a quiet microphone by 30 dB boosts its hiss by 30 dB too. Auto-levelling makes a badly configured mic *audible*, not *clean* — it is a safety net, not a substitute for setting your input gain correctly.
-- **The natural balance between sources is discarded.** That is the point, but it means turning your system volume down mid-recording no longer makes the desktop audio quieter in the file; the AGC just compensates.
-- **Recordings are no longer bit-identical between takes** of the same material.
-
-Turn it off if you are capturing material where the relative balance of the two sources is itself the content.
+Desktop levelling can amplify noise already present in desktop audio and compensates for changes in system playback volume. Set `agc=off` to preserve the captured desktop level too. This option does not remove noise already present in either source.
 
 ### Checking your levels
 
@@ -181,19 +166,19 @@ LocalRecord listens for **SIGUSR1** on Linux and toggles recording when it
 arrives, so your compositor can bind a key to it directly:
 
 ```bash
-pkill -USR1 -x localrecord
+pkill -USR1 -x 'localrecord|localrec-[0-9].*'
 ```
 
 Hyprland, in `~/.config/hypr/bindings.conf`:
 
 ```
-bindd = CTRL SHIFT, R, Audio recording, exec, pkill -USR1 -x localrecord
+bindd = CTRL SHIFT, R, Audio recording, exec, pkill -USR1 -x 'localrecord|localrec-[0-9].*'
 ```
 
 Sway, in `~/.config/sway/config`:
 
 ```
-bindsym Ctrl+Shift+r exec pkill -USR1 -x localrecord
+bindsym Ctrl+Shift+r exec pkill -USR1 -x 'localrecord|localrec-[0-9].*'
 ```
 
 This works on X11 too, so it is a reasonable binding to keep either way.
@@ -210,7 +195,7 @@ the shortcut you pick takes effect immediately.
   appended once to `hyprland.conf`.
 
 Nothing else in your config is touched. If you already bind
-`pkill -USR1 -x localrecord` by hand, remove that line — the two bindings would
+`pkill -USR1 -x 'localrecord|localrec-[0-9].*'` by hand, remove that line — the two bindings would
 otherwise both fire, and on the same key they would cancel each other out.
 LocalRecord names the offending files in the message it shows after a change.
 
@@ -234,7 +219,7 @@ and renamed into place, so a reader never catches a half-written one:
 ```json
 {
   "version": 1,
-  "app_version": "1.3.2",
+  "app_version": "1.3.3",
   "pid": 4242,
   "exe": "/usr/local/bin/localrecord",
   "recording": true,
@@ -256,7 +241,7 @@ idle one. The two version fields answer different questions: `version` is the
 schema of this file, bumped only when its shape changes, while `app_version` is
 the release the running app was built from — a reader that needs a feature
 added in some version can test for it rather than assume. It first appears in
-1.3.2; treat its absence as "older than that".
+1.3.3; treat its absence as "older than that".
 
 **Writing.** Two channels, so nothing has to edit the settings file behind the
 app's back and leave its tray menu stale.
@@ -264,8 +249,8 @@ app's back and leave its tray menu stale.
 Signals, for a compositor binding — they need no path and no shell:
 
 ```bash
-pkill -USR1 -x localrecord   # start/stop recording
-pkill -USR2 -x localrecord   # toggle auto-levelling
+pkill -USR1 -x 'localrecord|localrec-[0-9].*'   # start/stop recording
+pkill -USR2 -x 'localrecord|localrec-[0-9].*'   # toggle auto-levelling
 ```
 
 And `~/.local/share/localrecord/command` for everything else, one command per
@@ -318,7 +303,7 @@ pulls the latest release binary into `~/.local/bin`, without sudo.
 | Open recordings folder | Open output directory in Explorer |
 | Change recordings folder... | Pick a custom save location |
 | Change shortcut | Pick a new global hotkey — writes the compositor binding on Hyprland, disabled on other Wayland sessions, see above |
-| Auto-level mic and desktop audio | Toggle AGC — applies to the next recording |
+| Auto-level desktop audio | Toggle AGC — applies to the next recording |
 | Launch at startup | Toggle auto-start (Windows registry or XDG autostart on Linux) |
 | Exit | Quit the app |
 
@@ -372,7 +357,7 @@ Same core approach as OBS on Windows:
 
 1. **Desktop audio** — WASAPI loopback on the default render device, captured in that device's mix format and converted to 48 kHz stereo (Windows often ignores format conversion on loopback)
 2. **Microphone** — WASAPI capture on the default input device
-3. **Auto-level** — each stream levelled independently towards −20 dBFS RMS (unless `agc=off`)
+3. **Auto-level** — desktop audio levelled towards −20 dBFS RMS (unless `agc=off`); microphone gain stays fixed
 4. **Mix** — both streams mixed to 48 kHz stereo in software, then soft-limited at −1 dBFS
 5. **Output** — Opus (`.opus`) by default, or 16-bit PCM WAV via settings; clipboard gets the file (WAV paste when using `format=wav`)
 
@@ -381,7 +366,7 @@ Same core approach as OBS on Windows:
 1. **Desktop audio** — PulseAudio/PipeWire monitor source (`@DEFAULT_MONITOR@`)
 2. **Microphone** — default input source (`@DEFAULT_SOURCE@`)
 3. **Fragment size** — both streams request 10 ms fragments explicitly; the server default is large enough (~300 ms) that the two streams arrive in alternating bursts the mixer cannot pair
-4. **Auto-level** — each stream levelled independently towards −20 dBFS RMS (unless `agc=off`)
+4. **Auto-level** — desktop audio levelled towards −20 dBFS RMS (unless `agc=off`); microphone gain stays fixed
 5. **Mix** — both streams mixed to 48 kHz stereo in software, then soft-limited at −1 dBFS
 6. **Output** — same Opus/WAV pipeline as Windows; clipboard gets the file path
 
@@ -391,9 +376,9 @@ Same core approach as OBS on Windows:
 - Apps in exclusive audio mode may be missing from loopback
 - Large WAV recordings can be slow to copy to the clipboard (Opus copies the file path only; use `format=wav` if you need paste-as-audio)
 - Not all apps accept audio from the clipboard
-- On Wayland the built-in global shortcut cannot fire (X11 grab) — bind `pkill -USR1 -x localrecord` instead, see [Shortcut on Wayland](#shortcut-on-wayland)
+- On Wayland the built-in global shortcut cannot fire (X11 grab) — bind `pkill -USR1 -x 'localrecord|localrec-[0-9].*'` instead, see [Shortcut on Wayland](#shortcut-on-wayland)
 - Left-clicking the Linux tray icon does nothing; the backend exposes a menu only, so use right-click
-- Auto-levelling raises a quiet source's noise floor along with its signal, and cannot recover a source that never reaches the −55 dBFS gate
+- Desktop auto-levelling raises its noise floor along with its signal, and cannot recover desktop audio that never reaches the −55 dBFS gate. Microphone noise is not automatically boosted
 
 ## Contributing
 

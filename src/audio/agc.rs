@@ -1,54 +1,16 @@
-//! Automatic gain control, applied per source before mixing.
+//! Optional automatic gain control for desktop audio before mixing.
 //!
-//! # Why
+//! Tracks stereo RMS and moves towards a target level with fast attenuation
+//! and slow amplification. Below the gate, gain is frozen.
 //!
-//! WASAPI hands us whatever level the operating system happens to produce. The
-//! microphone level depends on the device's analog gain and on the Windows input
-//! slider; the loopback level depends on the system output volume and on the per
-//! application sliders of whatever is playing. Nothing keeps those two in step,
-//! so the two sources routinely land tens of dB apart — and video conferencing
-//! apps hide this, because they run their own AGC before anyone hears the mic.
+//! The microphone deliberately bypasses this processor: a fixed gate cannot
+//! distinguish quiet speech from room noise above its threshold, so applying
+//! AGC to the microphone boosts hiss during pauses in speech.
 //!
-//! The goal here is *equalisation*: both sources should land at a comparable
-//! level in the recording, whatever they came in at. That is why the gain range
-//! is symmetric — a source that is too loud gets pulled down just as a source
-//! that is too quiet gets pushed up.
-//!
-//! # How
-//!
-//! One instance per source, applied in [`crate::audio::mixer::Mixer`] as chunks
-//! arrive. For every stereo frame:
-//!
-//! 1. Track the input power with a one-pole averager ([`ENVELOPE_TC`]) to get a
-//!    running RMS estimate. Both channels feed the same estimate and receive the
-//!    same gain, so the stereo image is preserved.
-//! 2. Derive the gain that would put that RMS at [`TARGET_RMS_DBFS`], clamped to
-//!    [`MIN_GAIN_DB`]..=[`MAX_GAIN_DB`].
-//! 3. Move the applied gain towards that target with asymmetric smoothing: fast
-//!    when turning down ([`ATTACK_TC`]), slow when turning up ([`RELEASE_TC`]).
-//!    Turning up slowly is what keeps the result from pumping between words.
-//!
-//! # Noise gate
-//!
-//! Below [`GATE_DBFS`] the gain is frozen rather than raised. Without this the
-//! AGC would spend every silence winding up to maximum gain — amplifying room
-//! noise and hiss, then slamming the next word. It matters especially for the
-//! loopback stream, which is *digital silence* whenever nothing is playing: an
-//! ungated AGC would sit at +30 dB and detonate on the first note.
-//!
-//! # Known trade-offs
-//!
-//! - Amplifying a quiet source amplifies its noise floor with it. The AGC makes
-//!   a badly configured microphone audible, not clean. It is a safety net, not a
-//!   substitute for setting the input gain correctly.
-//! - Per-source levelling deliberately discards the natural balance between the
-//!   two sources. Turning the system volume down mid-recording no longer makes
-//!   the desktop audio quieter in the file, it just makes the AGC compensate.
-//! - Two takes of the same material no longer produce identical files.
-//!
-//! Because of those, this is opt-out via the `agc` setting.
+//! Desktop levelling is opt-out via the `agc` setting. It can amplify noise
+//! already present in desktop audio and compensates for output volume changes.
 
-/// Level both sources aim for, as RMS. Chosen to leave ~20 dB of headroom for
+/// Level desktop audio aims for, as RMS. Chosen to leave ~20 dB of headroom for
 /// peaks, so a normal speech crest factor lands just under full scale.
 const TARGET_RMS_DBFS: f32 = -20.0;
 
@@ -56,12 +18,10 @@ const TARGET_RMS_DBFS: f32 = -20.0;
 /// while stopping short of the range where only noise is left to amplify.
 const MAX_GAIN_DB: f32 = 30.0;
 
-/// Floor on gain. Attenuation matters as much as boost: equalising two sources
-/// means pulling the loud one down as well as pushing the quiet one up.
+/// Floor on gain: loud desktop audio is attenuated as well as quiet audio boosted.
 const MIN_GAIN_DB: f32 = -20.0;
 
-/// Below this input RMS the gain is held instead of raised. See the noise gate
-/// section above.
+/// Below this input RMS the gain is held instead of raised.
 const GATE_DBFS: f32 = -55.0;
 
 /// Averaging window for the RMS estimate. Long enough to ignore individual
@@ -179,9 +139,15 @@ mod tests {
     /// Interleaved stereo square wave of constant magnitude, so RMS == amplitude.
     fn tone(amplitude: f32, frames: usize) -> Vec<f32> {
         (0..frames * 2)
-            .map(|i| if (i / 2) % 2 == 0 { amplitude } else { -amplitude })
+            .map(|i| {
+                if (i / 2) % 2 == 0 {
+                    amplitude
+                } else {
+                    -amplitude
+                }
+            })
             .collect()
-        }
+    }
 
     fn rms(samples: &[f32]) -> f32 {
         let sum: f32 = samples.iter().map(|s| s * s).sum();

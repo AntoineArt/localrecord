@@ -9,10 +9,9 @@ pub struct Mixer {
     output: Vec<f32>,
     loopback_gain: f32,
     mic_gain: f32,
-    /// One AGC per source, so the two are levelled independently before they
-    /// are summed. `None` when the `agc` setting is off.
+    /// Optional desktop levelling. The microphone always keeps its fixed gain
+    /// so room noise cannot be boosted during pauses in speech.
     loopback_agc: Option<Agc>,
-    mic_agc: Option<Agc>,
 }
 
 /// ~500 ms of stereo samples at 48 kHz (24000 frames × 2 channels): the
@@ -44,18 +43,13 @@ impl Mixer {
             loopback_gain,
             mic_gain,
             loopback_agc: None,
-            mic_agc: None,
         }
     }
 
-    /// Enable per-source automatic gain control, which levels the loopback and
-    /// microphone streams towards a common target before mixing. See
-    /// [`crate::audio::agc`] for what that costs.
+    /// Enable automatic gain control for desktop audio only. Microphone audio
+    /// bypasses AGC even when an existing settings file has `agc=on`.
     pub fn with_agc(mut self, enabled: bool) -> Self {
-        if enabled {
-            self.loopback_agc = Some(Agc::new());
-            self.mic_agc = Some(Agc::new());
-        }
+        self.loopback_agc = enabled.then(Agc::new);
         self
     }
 
@@ -64,7 +58,7 @@ impl Mixer {
     }
 
     pub fn push_mic(&mut self, samples: &[f32]) {
-        push_leveled(&mut self.mic, &mut self.mic_agc, samples);
+        self.mic.extend(samples);
     }
 
     /// Trim drift and emit mixed output. Call after ingesting all pending chunks
@@ -164,10 +158,10 @@ const LIMIT_THRESHOLD: f32 = 0.891;
 
 /// Soft saturation of the summed mix.
 ///
-/// Summing two AGC-levelled sources overshoots full scale more often than
-/// summing two raw ones, and a hard `clamp` turns every overshoot into audible
-/// distortion. Everything below the threshold passes untouched; above it the
-/// curve bends asymptotically towards 1.0, so the output never clips outright.
+/// The sum of desktop and microphone audio can exceed full scale, and a hard
+/// `clamp` turns every overshoot into audible distortion. Everything below the
+/// threshold passes untouched; above it the curve bends asymptotically towards
+/// 1.0, so the output never clips outright.
 ///
 /// This is a memoryless saturator, not a look-ahead limiter: it colours loud
 /// peaks rather than transparently ducking ahead of them. That is the right
@@ -230,14 +224,14 @@ mod tests {
     }
 
     #[test]
-    fn agc_levels_a_quiet_source_before_mixing() {
+    fn agc_levels_quiet_desktop_audio_before_mixing() {
         let quiet = vec![0.004_f32; CAPTURE_CHUNK_SAMPLES]; // ~-48 dBFS
         let mut raw = Mixer::new(1.0, 1.0);
         let mut leveled = Mixer::new(1.0, 1.0).with_agc(true);
 
         for _ in 0..200 {
-            raw.push_mic(&quiet);
-            leveled.push_mic(&quiet);
+            raw.push_loopback(&quiet);
+            leveled.push_loopback(&quiet);
         }
 
         let raw_out = raw.finish();
@@ -251,6 +245,53 @@ mod tests {
             leveled_out[tail],
             raw_out[tail]
         );
+    }
+
+    #[test]
+    fn microphone_noise_stays_at_fixed_gain_between_speech_bursts() {
+        // Noise above the old -55 dBFS gate used to rise towards speech level.
+        // Include startup noise, speech, a long pause and speech resuming.
+        for enabled in [false, true] {
+            let mut mixer = Mixer::new(1.0, 0.85).with_agc(enabled);
+            let mut expected = Vec::new();
+            for (amplitude, chunks) in [(0.004, 300), (0.2, 200), (0.004, 500), (0.2, 100)] {
+                let mic: Vec<f32> = (0..CAPTURE_CHUNK_SAMPLES)
+                    .map(|i| if i % 4 < 2 { amplitude } else { -amplitude })
+                    .collect();
+                for _ in 0..chunks {
+                    mixer.push_mic(&mic);
+                    mixer.process(false);
+                    expected.extend(mic.iter().map(|sample| sample * 0.85));
+                }
+            }
+            assert_eq!(
+                mixer.finish(),
+                expected,
+                "microphone changed with AGC={enabled}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_audio_does_not_change_microphone_noise_level() {
+        let mut mixed = Mixer::new(1.0, 0.85).with_agc(true);
+        let mut desktop_only = Mixer::new(1.0, 0.0).with_agc(true);
+        let desktop = vec![0.02; CAPTURE_CHUNK_SAMPLES];
+        let mic = vec![0.004; CAPTURE_CHUNK_SAMPLES];
+        for _ in 0..500 {
+            for mixer in [&mut mixed, &mut desktop_only] {
+                mixer.push_loopback(&desktop);
+                mixer.push_mic(&mic);
+                mixer.process(false);
+            }
+        }
+        let mixed = mixed.finish();
+        let desktop_only = desktop_only.finish();
+        assert_eq!(mixed.len(), 500 * CAPTURE_CHUNK_SAMPLES);
+        assert_eq!(mixed.len(), desktop_only.len());
+        for (actual, desktop) in mixed.iter().zip(desktop_only) {
+            assert!((actual - desktop - 0.004 * 0.85).abs() < 1e-6);
+        }
     }
 
     #[test]
@@ -330,7 +371,9 @@ mod tests {
 
     #[test]
     fn does_not_double_output_when_chunks_arrive_separately() {
-        let chunk: Vec<f32> = (0..CAPTURE_CHUNK_SAMPLES).map(|i| i as f32 * 0.001).collect();
+        let chunk: Vec<f32> = (0..CAPTURE_CHUNK_SAMPLES)
+            .map(|i| i as f32 * 0.001)
+            .collect();
         let mut mixer = Mixer::new(1.0, 1.0);
         mixer.push_loopback(&chunk);
         mixer.process(false);

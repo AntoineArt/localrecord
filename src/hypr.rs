@@ -3,7 +3,7 @@
 //! Wayland gives a client no way to grab a key globally — the X11 grab behind
 //! [`crate::hotkey`] never receives anything there. What a compositor does
 //! offer is a binding that runs a command, and [`crate::signals`] already turns
-//! `pkill -USR1 -x localrecord` into a toggle. So the tray's picker stays
+//! `pkill -USR1 -x 'localrecord|localrec-[0-9].*'` into a toggle. So the tray's picker stays
 //! useful on Hyprland: we write that binding into a file of our own, loaded
 //! once from the entry config, and apply it live over `hyprctl`.
 //!
@@ -21,7 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const TOGGLE_COMMAND: &str = "pkill -USR1 -x localrecord";
+const TOGGLE_COMMAND: &str = "pkill -USR1 -x 'localrecord|localrec-[0-9].*'";
 const BINDING_DESCRIPTION: &str = "LocalRecord: toggle recording";
 
 /// Whether we are running under Hyprland, i.e. whether the tray picker can
@@ -48,6 +48,34 @@ pub fn set_toggle_binding(binding: &str) -> Result<(), String> {
     }
 
     hyprctl(&["reload"])
+}
+
+/// Upgrade only app-owned shortcut files after the Linux task name changed.
+/// Hand-written compositor configuration remains under the user's control.
+pub fn migrate_toggle_binding() -> Result<(), String> {
+    let dir = hypr_dir()?;
+    let mut changed = false;
+    for flavor in [ConfigFlavor::Lua, ConfigFlavor::Conf] {
+        let path = dir.join(flavor.managed_file());
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!("Failed to read {}: {err}", path.display())),
+        };
+        let updated = upgrade_toggle_command(&content);
+        if updated != content {
+            write_managed(&path, &updated)?;
+            changed = true;
+        }
+    }
+    if changed {
+        hyprctl(&["reload"])?;
+    }
+    Ok(())
+}
+
+fn upgrade_toggle_command(content: &str) -> String {
+    content.replace("pkill -USR1 -x localrecord", TOGGLE_COMMAND)
 }
 
 /// Hand-written `localrecord` bindings still sitting in the user's own config.
@@ -355,17 +383,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn upgrades_legacy_shortcuts_without_changing_keys_or_duplicating_bindings() {
+        for legacy in [
+            "bindd = CTRL SHIFT, R, LocalRecord, exec, pkill -USR1 -x localrecord\n",
+            "hl.bind(\"CTRL + R\", hl.dsp.exec_cmd(\"pkill -USR1 -x localrecord\"))\n",
+        ] {
+            let updated = upgrade_toggle_command(legacy);
+            assert!(updated.contains(TOGGLE_COMMAND));
+            assert_eq!(updated.lines().count(), 1);
+            assert_eq!(upgrade_toggle_command(&updated), updated);
+            assert_eq!(
+                updated.replace(TOGGLE_COMMAND, "pkill -USR1 -x localrecord"),
+                legacy
+            );
+        }
+    }
+
+    #[test]
     fn speaks_both_config_dialects() {
         let key = KeySpec::parse("Ctrl+Shift+R").unwrap();
         assert_eq!(key.conf_trigger(), "CTRL SHIFT, R");
         assert_eq!(
             key.conf_bindd(),
-            "CTRL SHIFT, R, LocalRecord: toggle recording, exec, pkill -USR1 -x localrecord"
+            "CTRL SHIFT, R, LocalRecord: toggle recording, exec, pkill -USR1 -x 'localrecord|localrec-[0-9].*'"
         );
         assert_eq!(key.lua_keys(), "CTRL + SHIFT + R");
         assert_eq!(
             key.lua_bind(),
-            "hl.bind(\"CTRL + SHIFT + R\", hl.dsp.exec_cmd(\"pkill -USR1 -x localrecord\"), \
+            "hl.bind(\"CTRL + SHIFT + R\", hl.dsp.exec_cmd(\"pkill -USR1 -x 'localrecord|localrec-[0-9].*'\"), \
              { description = \"LocalRecord: toggle recording\" })"
         );
     }
@@ -388,10 +433,10 @@ mod tests {
     #[test]
     fn only_hand_written_bindings_count_as_conflicts() {
         assert!(is_conflicting_line(
-            "o.bind(\"CTRL + SHIFT + R\", \"LocalRecord\", \"pkill -USR1 -x localrecord\")"
+            "o.bind(\"CTRL + SHIFT + R\", \"LocalRecord\", \"pkill -USR1 -x 'localrecord|localrec-[0-9].*'\")"
         ));
         assert!(is_conflicting_line(
-            "bindd = CTRL SHIFT, R, Audio, exec, pkill -USR1 -x localrecord"
+            "bindd = CTRL SHIFT, R, Audio, exec, pkill -USR1 -x 'localrecord|localrec-[0-9].*'"
         ));
         // Our own load line, in the config we just edited.
         assert!(!is_conflicting_line(
@@ -401,7 +446,7 @@ mod tests {
             "source = /home/x/.config/hypr/localrecord.conf"
         ));
         assert!(!is_conflicting_line(
-            "-- o.bind(\"CTRL + R\", \"x\", \"pkill -USR1 -x localrecord\")"
+            "-- o.bind(\"CTRL + R\", \"x\", \"pkill -USR1 -x 'localrecord|localrec-[0-9].*'\")"
         ));
     }
 

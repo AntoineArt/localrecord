@@ -22,6 +22,8 @@ mod hypr;
 mod icon;
 mod log;
 mod notification;
+#[cfg(target_os = "linux")]
+mod process_name;
 mod settings;
 #[cfg(target_os = "linux")]
 mod signals;
@@ -39,6 +41,8 @@ fn main() {
         report_version();
         return;
     }
+    #[cfg(target_os = "linux")]
+    process_name::set();
     run();
 }
 
@@ -148,6 +152,11 @@ fn run() {
     {
         init_linux_gtk();
         signals::install();
+        if hypr::available() {
+            if let Err(err) = hypr::migrate_toggle_binding() {
+                log::error(&format!("Could not update LocalRecord shortcut: {err}"));
+            }
+        }
     }
 
     clipboard::init_clipboard();

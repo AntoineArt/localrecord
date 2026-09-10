@@ -414,9 +414,9 @@ impl App {
                 #[cfg(target_os = "linux")]
                 crate::state::refresh();
                 let msg = if enabled {
-                    "Auto-levelling enabled"
+                    "Desktop auto-levelling enabled"
                 } else {
-                    "Auto-levelling disabled"
+                    "Desktop auto-levelling disabled"
                 };
                 let msg = if matches!(
                     self.state,
